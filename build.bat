@@ -22,12 +22,12 @@ set ARCH=x64
 set SKIP_GO=0
 
 :parse_args
-if "%1"=="debug"   set TARGET=debug   & shift & goto parse_args
-if "%1"=="release" set TARGET=release & shift & goto parse_args
-if "%1"=="x32"     set ARCH=x32       & shift & goto parse_args
-if "%1"=="x64"     set ARCH=x64       & shift & goto parse_args
-if "%1"=="skip-go" set SKIP_GO=1      & shift & goto parse_args
-if "%1"=="" goto do_build
+if "%~1"=="debug"   (set "TARGET=debug"   & shift & goto parse_args)
+if "%~1"=="release" (set "TARGET=release" & shift & goto parse_args)
+if "%~1"=="x32"     (set "ARCH=x32"       & shift & goto parse_args)
+if "%~1"=="x64"     (set "ARCH=x64"       & shift & goto parse_args)
+if "%~1"=="skip-go" (set "SKIP_GO=1"      & shift & goto parse_args)
+if "%~1"=="" goto do_build
 shift & goto parse_args
 
 :do_build
@@ -64,7 +64,7 @@ echo  [OK] Rust compile
 REM ── Compile Go ────────────────────────────────────────────────
 if "%SKIP_GO%"=="0" (
     echo.
-    echo  [2/3] Compilation Go (services)...
+    echo  [2/3] Compilation Go ^(services^)...
 
     if "%ARCH%"=="x32" (
         set GOARCH=386
@@ -74,15 +74,15 @@ if "%SKIP_GO%"=="0" (
     set GOOS=windows
     set CGO_ENABLED=0
 
-    go build -ldflags="-s -w" -o dist\subtitle-service.exe  .\cmd\subtitle-service\
+    go build -o dist\subtitle-service.exe  .\cmd\subtitle-service\
     if %ERRORLEVEL% NEQ 0 ( echo  [WARN] subtitle-service build echoue )
 
-    go build -ldflags="-s -w" -o dist\media-indexer.exe     .\cmd\media-indexer\
+    go build -o dist\media-indexer.exe     .\cmd\media-indexer\
     if %ERRORLEVEL% NEQ 0 ( echo  [WARN] media-indexer build echoue )
 
     echo  [OK] Services Go compiles
 ) else (
-    echo  [2/3] Services Go — IGNORE (skip-go)
+    echo  [2/3] Services Go — IGNORE ^(skip-go^)
 )
 
 REM ── Assemble le dossier dist ───────────────────────────────────
