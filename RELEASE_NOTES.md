@@ -2,6 +2,24 @@
 
 ---
 
+## v1.4.7 (2026-07-27) — Premiers builds Linux (.deb/AppImage) + installateur Windows + fixes build.bat
+
+### Corrections critiques (build.bat)
+
+- **[CRITIQUE] `build.bat release x64` ne produisait en réalité JAMAIS de vrai build release depuis la toute première version.** `parse_args` faisait `set TARGET=release & shift & goto parse_args` — l'espace avant le `&` fait partie de la valeur assignée (`TARGET` devenait `"release "`, espace final inclus, pas `"release"`). `if "%TARGET%"=="release"` ne correspondait donc jamais, et `CARGO_FLAGS` restait vide : **tous les builds "release" précédents (v1.4.0 → v1.4.6, ZIPs portables inclus) ont en réalité compilé en profil `dev`** (pas de `strip`, pas de LTO, opt-level 1, assertions de debug actives). Fix : `set "TARGET=release"` guillemeté (empêche l'espace de rentrer dans la valeur) sur les 5 lignes de `parse_args`.
+- **[HAUTE] Le bloc de compilation des services Go échouait systématiquement dès qu'il était réellement exécuté.** Des parenthèses littérales dans un `echo` à l'intérieur d'un bloc `if (...)` cassent le parseur cmd.exe (`... était inattendu.`, tout le script s'arrête). Fix : échappées avec `^`.
+- **`media-indexer.exe` signalé comme virus (Wacatac.B!ml) par Windows Defender** — faux positif : binaire Go stripé (`-ldflags="-s -w"`) + serveur HTTP + parcours récursif de fichiers correspond au profil heuristique ML de Defender. Fix : `-s -w` retiré des builds Go.
+
+### Nouveauté — premiers packages Linux et installateur Windows
+
+- **Installateur Windows** (`OmniPlayer_v{version}_Setup.exe`, Inno Setup) en plus du ZIP portable — raccourcis menu Démarrer/bureau, désinstalleur, lance `launch.bat` (démarre aussi les 2 services Go).
+- **Premier build Linux natif** (Rust release + services Go). Piège rencontré : le crate `ffmpeg-next` patché (vendored dans `patches/ffmpeg-next`) ne compile plus contre les headers FFmpeg 8.x récents (BtbN master/n8.1) — `AVCodec` a perdu ses champs directs (`pix_fmts`, `supported_framerates`, `sample_fmts`, `ch_layouts`, remplacés par `avcodec_get_supported_config()`) dans les versions FFmpeg 8 récentes, et plusieurs `AVCodecID` référencés par le patch n'existent plus. Contournement : compiler contre FFmpeg **7.1.5** (paquets `apt` Debian trixie), qui a toujours l'ancienne disposition — fonctionne sans toucher au patch. Voir `build-linux.sh` et `feedback_ffmpeg_next_api_drift` en mémoire.
+- **Package `.deb`** (`omniplayer_{version}_amd64.deb`) — dépendances système déclarées (`libavcodec61`, `libavformat61`, etc., `libgtk-3-0t64`, `libasound2t64`), installe dans `/opt/omniplayer` + wrapper `/usr/bin/omniplayer` + entrée `.desktop`.
+- **AppImage** (`OmniPlayer_v{version}_x86_64.AppImage`) — autoportant, bundle les `.so` FFmpeg exacts utilisés à la compilation (GTK3/ALSA supposés présents sur le système hôte, convention standard AppImage).
+- Les deux testés (lancement réel sous Xvfb + Mesa logiciel sur VPS headless) : fenêtre créée, pipeline GPU initialisé (repli logiciel sans GPU), services Go démarrés, gestion propre de l'absence de périphérique audio.
+
+---
+
 ## v1.4.5 (2026-07-20) — Vrai pipeline HDR 10-bit
 
 ### Nouveauté majeure
