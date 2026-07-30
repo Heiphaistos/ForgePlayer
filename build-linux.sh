@@ -37,15 +37,15 @@ export CXX=g++
 export BINDGEN_EXTRA_CLANG_ARGS=""
 unset PKG_CONFIG_PATH
 export LD_LIBRARY_PATH="$FFDIR/lib"
-cargo build --release -p omni-player
+cargo build --release -p forgeplayer
 
 echo "[4/5] go build (services)..."
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o dist/subtitle-service ./cmd/subtitle-service/
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o dist/media-indexer ./cmd/media-indexer/
 mkdir -p dist
-cp target/release/omniplayer dist/
+cp target/release/forgeplayer dist/
 
 echo "[5/5] Smoke test (Xvfb, 8s)..."
-timeout 8 xvfb-run -a ./dist/omniplayer || true
+timeout 8 xvfb-run -a ./dist/forgeplayer || true
 
 echo "OK. Binaires dans dist/. Voir DEBUG_LOG.md pour le detail du packaging .deb/AppImage."

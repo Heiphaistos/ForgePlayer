@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"omniplayer/pkg/metadata"
-	"omniplayer/pkg/subtitles"
+	"forgeplayer/pkg/metadata"
+	"forgeplayer/pkg/subtitles"
 )
 
 // Bridge regroupe les handlers HTTP exposés au lecteur Rust.

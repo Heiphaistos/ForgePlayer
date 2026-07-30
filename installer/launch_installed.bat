@@ -1,5 +1,5 @@
 @echo off
-REM Lance les services Go en arrière-plan puis démarre OmniPlayer.
+REM Lance les services Go en arrière-plan puis démarre ForgePlayer.
 REM Variante "installée" de launch.bat : les exe sont à plat dans ce même dossier
 REM (pas de sous-dossier dist\, contrairement au repo de dev).
 setlocal
@@ -28,5 +28,5 @@ REM Petit délai pour laisser les services démarrer
 timeout /t 1 /nobreak >nul
 
 REM ── Lecteur principal ─────────────────────────────────────────
-echo [launch] Demarrage OmniPlayer...
-"%DIST%OmniPlayer.exe" %*
+echo [launch] Demarrage ForgePlayer...
+"%DIST%ForgePlayer.exe" %*

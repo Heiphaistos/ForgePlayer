@@ -1,4 +1,4 @@
-# OmniPlayer — Audit Report v1.2.0
+# ForgePlayer — Audit Report v1.2.0
 
 **Date:** 2026-05-20
 **Scope:** Full codebase audit — security, performance, correctness
@@ -80,7 +80,7 @@ All 11 issues resolved. Rust: `cargo check` → 0 errors, 0 warnings. Go: `go bu
 ### LOW-3 — Minor code quality
 - `cmd/media-indexer/main.go:35`: `".mp4":".mp4"==".mp4"` → `".mp4": true`
 - `pkg/ipc/bridge.go:122`, `pkg/metadata/tmdb.go:132`: `interface{}` → `any`
-- `pkg/subtitles/client.go:17`: user-agent updated to `OmniPlayer v1.2`
+- `pkg/subtitles/client.go:17`: user-agent updated to `ForgePlayer v1.2`
 
 ---
 

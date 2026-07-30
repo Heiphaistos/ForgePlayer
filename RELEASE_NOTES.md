@@ -1,4 +1,4 @@
-# OmniPlayer — Notes de Version
+# ForgePlayer — Notes de Version
 
 ---
 
@@ -12,10 +12,10 @@
 
 ### Nouveauté — premiers packages Linux et installateur Windows
 
-- **Installateur Windows** (`OmniPlayer_v{version}_Setup.exe`, Inno Setup) en plus du ZIP portable — raccourcis menu Démarrer/bureau, désinstalleur, lance `launch.bat` (démarre aussi les 2 services Go).
+- **Installateur Windows** (`ForgePlayer_v{version}_Setup.exe`, Inno Setup) en plus du ZIP portable — raccourcis menu Démarrer/bureau, désinstalleur, lance `launch.bat` (démarre aussi les 2 services Go).
 - **Premier build Linux natif** (Rust release + services Go). Piège rencontré : le crate `ffmpeg-next` patché (vendored dans `patches/ffmpeg-next`) ne compile plus contre les headers FFmpeg 8.x récents (BtbN master/n8.1) — `AVCodec` a perdu ses champs directs (`pix_fmts`, `supported_framerates`, `sample_fmts`, `ch_layouts`, remplacés par `avcodec_get_supported_config()`) dans les versions FFmpeg 8 récentes, et plusieurs `AVCodecID` référencés par le patch n'existent plus. Contournement : compiler contre FFmpeg **7.1.5** (paquets `apt` Debian trixie), qui a toujours l'ancienne disposition — fonctionne sans toucher au patch. Voir `build-linux.sh` et `feedback_ffmpeg_next_api_drift` en mémoire.
-- **Package `.deb`** (`omniplayer_{version}_amd64.deb`) — dépendances système déclarées (`libavcodec61`, `libavformat61`, etc., `libgtk-3-0t64`, `libasound2t64`), installe dans `/opt/omniplayer` + wrapper `/usr/bin/omniplayer` + entrée `.desktop`.
-- **AppImage** (`OmniPlayer_v{version}_x86_64.AppImage`) — autoportant, bundle les `.so` FFmpeg exacts utilisés à la compilation (GTK3/ALSA supposés présents sur le système hôte, convention standard AppImage).
+- **Package `.deb`** (`forgeplayer_{version}_amd64.deb`) — dépendances système déclarées (`libavcodec61`, `libavformat61`, etc., `libgtk-3-0t64`, `libasound2t64`), installe dans `/opt/forgeplayer` + wrapper `/usr/bin/forgeplayer` + entrée `.desktop`.
+- **AppImage** (`ForgePlayer_v{version}_x86_64.AppImage`) — autoportant, bundle les `.so` FFmpeg exacts utilisés à la compilation (GTK3/ALSA supposés présents sur le système hôte, convention standard AppImage).
 - Les deux testés réels sous WSL2 Ubuntu 22.04 (WSLg, GPU/audio réels) en plus du smoke test VPS. `.deb` : comportement correct — `dpkg` refuse proprement l'installation si les paquets système exacts manquent (testé volontairement sur Ubuntu 22.04, message clair, pas de crash). **AppImage — limitation connue** : construite sur Debian 13 (glibc récent), fonctionne sur systèmes équivalents/récents mais plante sur systèmes plus anciens (`GLIBC_2.38/2.39 not found`, testé sur Ubuntu 22.04) — bundler les `.so` FFmpeg ne rend pas l'app indépendante de la version de glibc du système hôte ; un vrai fix demanderait de builder sur une base glibc plus ancienne (non fait dans cette release).
 
 ---
@@ -95,7 +95,7 @@ VM, vraie vidéo 60 s : 46 s de lecture continue restent alignées à ±20 ms su
 
 ### Nouveautés
 
-- **Ouverture par ligne de commande** — `OmniPlayer.exe <fichier|URL>` : association de fichiers Windows et « Ouvrir avec » fonctionnels.
+- **Ouverture par ligne de commande** — `ForgePlayer.exe <fichier|URL>` : association de fichiers Windows et « Ouvrir avec » fonctionnels.
 
 ---
 
@@ -124,7 +124,7 @@ VM, vraie vidéo 60 s : 46 s de lecture continue restent alignées à ±20 ms su
 - **Badge résolution** — Affichage SD / 480p / 720p / 1080p / 1440p / 4K UHD / 8K dans la barre de menu et la barre de contrôles.
 - **Visionneuse d'images** — Mode dédié pour les images statiques avec zoom/pan interactif. Détecte automatiquement les extensions image et n'instancie pas le pipeline FFmpeg inutilement.
 - **Drag-and-drop de sous-titres** — Glisser un fichier SRT/ASS/SSA/VTT directement sur la fenêtre pour le charger sur la vidéo en cours.
-- **Chargement automatique de sous-titres** — Lors de l'ouverture d'un fichier vidéo, OmniPlayer cherche automatiquement un fichier SRT/ASS/SSA du même nom dans le même dossier.
+- **Chargement automatique de sous-titres** — Lors de l'ouverture d'un fichier vidéo, ForgePlayer cherche automatiquement un fichier SRT/ASS/SSA du même nom dans le même dossier.
 - **Downmix surround** — Downmix 5.1 et 7.1 vers stéréo avec pondération correcte des canaux center et surround (ITU-R BS.775).
 - **Accélération matérielle intelligente** — Sélection automatique D3D11VA (Windows 8+) ou DXVA2 au démarrage via `is_d3d11va_available()`.
 - **Espace colorimétrique automatique** — Détection BT.601/BT.709/BT.2020 depuis les métadonnées FFmpeg avec heuristique de résolution en cas d'absence de métadonnées.
@@ -175,7 +175,7 @@ VM, vraie vidéo 60 s : 46 s de lecture continue restent alignées à ±20 ms su
 
 - **LOW-1** — Préférence DXVA2 codée en dur (`crates/omni-core/src/pipeline/demuxer.rs`) : `is_d3d11va_available()` sondé au démarrage — D3D11VA sélectionné si disponible (~15% de throughput en plus sur H.265/HEVC).
 - **LOW-2** — Dépendances Go inutilisées (`go.mod`) : suppression de `gorilla/mux`, `zerolog`, `cobra`, `diskv` via `go mod tidy`. `go.mod` contient désormais uniquement `go 1.22`.
-- **LOW-3** — Qualité de code Go : `".mp4":".mp4"==".mp4"` → `".mp4": true`, `interface{}` → `any`, user-agent mis à jour vers `OmniPlayer v1.2`.
+- **LOW-3** — Qualité de code Go : `".mp4":".mp4"==".mp4"` → `".mp4": true`, `interface{}` → `any`, user-agent mis à jour vers `ForgePlayer v1.2`.
 
 ---
 

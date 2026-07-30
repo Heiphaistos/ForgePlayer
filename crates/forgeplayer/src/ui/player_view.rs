@@ -207,7 +207,7 @@ fn draw_idle_screen(ui: &mut Ui, rect: Rect) {
 
     // Titre + accroche
     p.text(egui::pos2(c.x, c.y + 70.0), egui::Align2::CENTER_CENTER,
-        "OmniPlayer", egui::FontId::proportional(22.0), Color32::from_gray(232));
+        "ForgePlayer", egui::FontId::proportional(22.0), Color32::from_gray(232));
     p.text(egui::pos2(c.x, c.y + 91.0), egui::Align2::CENTER_CENTER,
         "Glissez un fichier  ·  Ctrl+O  ·  Ctrl+L",
         egui::FontId::proportional(11.0), Color32::from_gray(100));

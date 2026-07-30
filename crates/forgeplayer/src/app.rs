@@ -17,7 +17,7 @@ const ACCENT: egui::Color32 = egui::Color32::from_rgb(74, 158, 255);
 
 struct Osd { text: String, expires_at: f64 }
 
-pub struct OmniApp {
+pub struct ForgeApp {
     player:            Player,
     audio:             Option<AudioEngine>,
     config:            AppConfig,
@@ -51,7 +51,7 @@ pub struct OmniApp {
     dbg_last_log:      f64,
 }
 
-impl OmniApp {
+impl ForgeApp {
     pub fn new(cc: &CreationContext, config: AppConfig, initial_file: Option<String>) -> Self {
         Self::apply_theme(&cc.egui_ctx);
 
@@ -161,6 +161,7 @@ impl OmniApp {
         self.image_viewer.reset();
         self.image_texture = None;
         self.image_path_loaded.clear();
+        self.player.hw_accel_pref = self.config.hw_accel.clone();
         if let Err(e) = self.player.open(&path) {
             log::error!("player.open: {e}");
             self.player.state = PlayerState::Error(e.to_string());
@@ -535,8 +536,8 @@ impl OmniApp {
 
     fn update_window_title(&mut self, ctx: &egui::Context) {
         let title = self.player.display_title()
-            .map(|t| format!("OmniPlayer — {t}"))
-            .unwrap_or_else(|| "OmniPlayer".to_string());
+            .map(|t| format!("ForgePlayer — {t}"))
+            .unwrap_or_else(|| "ForgePlayer".to_string());
         if title != self.last_title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
             self.last_title = title;
@@ -607,7 +608,7 @@ impl OmniApp {
     }
 }
 
-impl eframe::App for OmniApp {
+impl eframe::App for ForgeApp {
     fn update(&mut self, ctx: &Context, _frame: &mut Frame) {
         let now = ctx.input(|i| i.time);
 
@@ -624,7 +625,9 @@ impl eframe::App for OmniApp {
         // Pipeline
         self.sync_clock_to_audio();
         self.player.poll_events();
+        if let Some(w) = self.player.pending_warning.take() { self.set_osd(w); }
         self.sync_position_from_clock();
+        self.player.maybe_finish_playback();
         self.process_seek();
         self.process_flush();
         self.pump_audio();
@@ -851,7 +854,7 @@ impl eframe::App for OmniApp {
     }
 }
 
-impl OmniApp {
+impl ForgeApp {
     fn draw_menu_bar(&mut self, ui: &mut egui::Ui, _now: f64) {
         egui::menu::bar(ui, |ui| {
             ui.menu_button("Fichier", |ui| {
@@ -933,7 +936,7 @@ impl OmniApp {
 
             // Droite : résolution + codec + HDR + titre
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(egui::RichText::new("OmniPlayer").color(ACCENT).strong().size(13.0));
+                ui.label(egui::RichText::new("ForgePlayer").color(ACCENT).strong().size(13.0));
                 if let Some(info) = &self.player.media_info {
                     if let Some(v) = &info.video {
                         ui.separator();

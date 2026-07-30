@@ -16,7 +16,7 @@ import (
 
 const (
 	baseURL        = "https://api.opensubtitles.com/api/v1"
-	userAgent      = "OmniPlayer v1.4"
+	userAgent      = "ForgePlayer v1.5"
 	maxDownloadSize = 10 * 1024 * 1024 // 10 MB — subtitle files are never larger
 )
 
@@ -31,7 +31,7 @@ type Client struct {
 // NewClient crée un client avec clé API.
 // Clé gratuite disponible sur opensubtitles.com.
 func NewClient(apiKey string) *Client {
-	cacheDir := filepath.Join(os.TempDir(), "omniplayer", "subtitles")
+	cacheDir := filepath.Join(os.TempDir(), "forgeplayer", "subtitles")
 	_ = os.MkdirAll(cacheDir, 0755)
 
 	return &Client{

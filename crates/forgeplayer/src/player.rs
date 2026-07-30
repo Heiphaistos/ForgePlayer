@@ -48,6 +48,18 @@ pub struct Player {
     /// (app::sync_clock_to_audio). Les PositionChanged du pipeline (position de
     /// DÉCODAGE, en avance de tout le buffer) ne pilotent alors plus l'horloge.
     pub clock_audio_master: bool,
+    /// "auto"/"d3d11va"/"dxva2"/"none" — copié depuis AppConfig.hw_accel avant
+    /// chaque open(); lu par le thread pipeline à l'ouverture du fichier.
+    pub hw_accel_pref:    String,
+    /// Avis non-fatal du pipeline (ex: piste audio illisible) — consommé une
+    /// fois par l'UI via `.take()` pour l'afficher en OSD.
+    pub pending_warning:  Option<String>,
+    /// Le pipeline a fini de LIRE le fichier (plus aucune donnée à venir) —
+    /// distinct de "la lecture réelle (temps réel) est arrivée à la fin" : le
+    /// décodage matériel peut lire/décoder tout le fichier bien plus vite que
+    /// le temps réel. Voir `maybe_finish_playback`.
+    input_ended:          bool,
+    input_ended_at:       Option<std::time::Instant>,
     pipeline:             Option<MediaPipeline>,
 }
 
@@ -70,6 +82,10 @@ impl Player {
             embedded_events:  Vec::new(),
             audio_flush_needed: false,
             clock_audio_master: false,
+            hw_accel_pref:    "auto".into(),
+            pending_warning:  None,
+            input_ended:      false,
+            input_ended_at:   None,
             pipeline:         None,
         }
     }
@@ -90,12 +106,14 @@ impl Player {
         self.embedded_events.clear();
         self.audio_flush_needed = true;
         self.clock            = MasterClock::new();
+        self.input_ended      = false;
+        self.input_ended_at   = None;
 
         if omni_core::is_image_path(path) {
             return self.open_image(path);
         }
 
-        self.pipeline = Some(MediaPipeline::launch(path.to_string())?);
+        self.pipeline = Some(MediaPipeline::launch(path.to_string(), self.hw_accel_pref.clone())?);
         Ok(())
     }
 
@@ -319,8 +337,17 @@ impl Player {
                     }
                 }
                 PipelineEvent::BufferingProgress(b) => { self.state = PlayerState::Buffering(b); }
-                PipelineEvent::EndOfStream          => { self.state = PlayerState::EndOfFile; }
+                PipelineEvent::EndOfStream          => {
+                    // Ne bascule PAS directement en EndOfFile ici : le pipeline a fini
+                    // de LIRE le fichier, mais avec le décodage matériel ça peut arriver
+                    // bien avant que la lecture réelle (temps réel) n'ait rattrapé la
+                    // fin — les frames déjà mises en file doivent encore s'afficher/
+                    // s'entendre à leur PTS. Voir maybe_finish_playback().
+                    self.input_ended    = true;
+                    self.input_ended_at = Some(std::time::Instant::now());
+                }
                 PipelineEvent::Error(e)             => { self.state = PlayerState::Error(e); }
+                PipelineEvent::Warning(w)           => { self.pending_warning = Some(w); }
                 PipelineEvent::MetadataReady(info)  => {
                     self.chapters   = info.chapters.clone();
                     self.media_info = Some(*info);
@@ -340,6 +367,23 @@ impl Player {
         }
 
         self.update_subtitle();
+    }
+
+    /// À appeler après resynchronisation de `position` sur l'horloge temps réel
+    /// (sync_position_from_clock côté app.rs). Ne déclare la lecture terminée
+    /// (état EndOfFile — arrête pump_video, déclenche boucle/piste suivante)
+    /// qu'une fois la position réelle rattrapée, ou après un délai de grâce si
+    /// elle ne peut jamais l'atteindre exactement (durée du conteneur
+    /// approximative, aucune frame jamais produite pour un fichier invalide…).
+    pub fn maybe_finish_playback(&mut self) {
+        let Some(since) = self.input_ended_at else { return };
+        if matches!(self.state, PlayerState::EndOfFile | PlayerState::Error(_)) { return; }
+
+        let caught_up = self.duration > 0.0 && self.position >= self.duration - 0.15;
+        let timed_out = since.elapsed() > Duration::from_secs(3);
+        if caught_up || timed_out {
+            self.state = PlayerState::EndOfFile;
+        }
     }
 
     fn update_subtitle(&mut self) {

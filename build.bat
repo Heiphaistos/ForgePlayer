@@ -1,8 +1,8 @@
 @echo off
 setlocal EnableDelayedExpansion
-title OmniPlayer — Build
+title ForgePlayer — Build
 echo.
-echo  [BUILD] OmniPlayer — Compilation Rust + Go
+echo  [BUILD] ForgePlayer — Compilation Rust + Go
 echo =============================================================
 
 REM ── Vérifie FFMPEG_DIR ─────────────────────────────────────────
@@ -54,7 +54,7 @@ if "%TARGET%"=="release" (
 )
 
 set FFMPEG_DIR=%FFMPEG_DIR%
-cargo build %CARGO_FLAGS% --target %RUST_TARGET% -p omni-player 2>&1
+cargo build %CARGO_FLAGS% --target %RUST_TARGET% -p forgeplayer 2>&1
 if %ERRORLEVEL% NEQ 0 (
     echo  [ERREUR] Compilation Rust echouee.
     pause & exit /b 1
@@ -90,15 +90,15 @@ echo.
 echo  [3/3] Assemblage dist\...
 
 if "%TARGET%"=="release" (
-    set RUST_BIN=target\%RUST_TARGET%\release\omniplayer.exe
+    set RUST_BIN=target\%RUST_TARGET%\release\forgeplayer.exe
 ) else (
-    set RUST_BIN=target\%RUST_TARGET%\debug\omniplayer.exe
+    set RUST_BIN=target\%RUST_TARGET%\debug\forgeplayer.exe
 )
 
 if not exist dist mkdir dist
 
 REM Copie l'exécutable Rust principal
-copy /Y "%RUST_BIN%" dist\OmniPlayer.exe >nul
+copy /Y "%RUST_BIN%" dist\ForgePlayer.exe >nul
 if %ERRORLEVEL% NEQ 0 (
     echo  [ERREUR] Executable Rust introuvable : %RUST_BIN%
     pause & exit /b 1
@@ -120,12 +120,12 @@ xcopy /E /I /Y assets dist\assets >nul
 echo.
 echo =============================================================
 echo  [✓] Build termine !
-echo     Executable  : dist\OmniPlayer.exe
+echo     Executable  : dist\ForgePlayer.exe
 if "%SKIP_GO%"=="0" (
     echo     Services    : dist\subtitle-service.exe
     echo                   dist\media-indexer.exe
 )
-echo     Lancez dist\OmniPlayer.exe pour demarrer.
+echo     Lancez dist\ForgePlayer.exe pour demarrer.
 echo =============================================================
 echo.
 pause

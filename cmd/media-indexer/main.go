@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"omniplayer/pkg/metadata"
+	"forgeplayer/pkg/metadata"
 )
 
 // MediaEntry représente un fichier média indexé.

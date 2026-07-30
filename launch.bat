@@ -1,5 +1,5 @@
 @echo off
-REM Lance les services Go en arrière-plan puis démarre OmniPlayer.
+REM Lance les services Go en arrière-plan puis démarre ForgePlayer.
 setlocal
 
 set DIST=%~dp0dist
@@ -26,5 +26,5 @@ REM Petit délai pour laisser les services démarrer
 timeout /t 1 /nobreak >nul
 
 REM ── Lecteur principal ─────────────────────────────────────────
-echo [launch] Demarrage OmniPlayer...
-"%DIST%\OmniPlayer.exe" %*
+echo [launch] Demarrage ForgePlayer...
+"%DIST%\ForgePlayer.exe" %*

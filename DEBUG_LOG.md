@@ -1,4 +1,4 @@
-# OmniPlayer — Journal de débogage
+# ForgePlayer — Journal de débogage
 
 Mis à jour en continu pendant la campagne de test sur PC réel (audio matériel).
 Format par entrée : `[STATUT] Zone — description`. STATUT ∈ {FIXED, OPEN, TESTED-OK, TODO}.

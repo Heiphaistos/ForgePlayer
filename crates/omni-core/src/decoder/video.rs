@@ -84,6 +84,23 @@ impl VideoDecoder {
             .map(|p| p as f64 * self.time_base)
             .unwrap_or(0.0);
 
+        // Frame décodée sur GPU (D3D11VA/DXVA2) : rapatrie en mémoire système
+        // avant toute conversion — le reste du pipeline (extract_planes,
+        // SwsContext) ne connaît que des frames logicielles. `pts_secs` a déjà
+        // été lu ci-dessus : av_hwframe_transfer_data ne copie pas le PTS, pas
+        // besoin de le relire sur la frame téléchargée.
+        let raw = if is_hw_format(raw.format()) {
+            match download_hw_frame(&raw) {
+                Ok(sw) => sw,
+                Err(e) => {
+                    log::warn!("téléchargement frame GPU échoué, frame ignorée: {e:#}");
+                    return Ok(None);
+                }
+            }
+        } else {
+            raw
+        };
+
         // Conversion de format si nécessaire (ex: yuv420p10le nvidia → yuv420p10le
         // uniforme, ou tout format exotique → yuv420p)
         let target_fmt = Self::desired_target(raw.format());
@@ -104,7 +121,11 @@ impl VideoDecoder {
                         target_fmt,
                         raw.width(),
                         raw.height(),
-                        Flags::BILINEAR,
+                        // Dimensions inchangées ici (seul le format pixel change, ex.
+                        // 4:2:2/4:4:4→4:2:0 ou exotique→yuv420p) — BICUBIC coûte à peine
+                        // plus que BILINEAR à cette taille et évite le flou chroma
+                        // perceptible sur les masters 4K haute qualité.
+                        Flags::BICUBIC,
                     )
                     .context("création SwsContext — format/dimensions incompatibles")?,
                 );
@@ -182,6 +203,27 @@ fn extract_planes(frame: &ffmpeg::util::frame::video::Video) -> (Vec<Vec<u8>>, V
             (vec![data], vec![stride], PixelFormat::Rgba)
         }
     }
+}
+
+fn is_hw_format(fmt: ffmpeg::format::Pixel) -> bool {
+    matches!(fmt, ffmpeg::format::Pixel::D3D11 | ffmpeg::format::Pixel::DXVA2_VLD)
+}
+
+/// Copie les données pixel d'une frame GPU (D3D11/DXVA2) vers une frame
+/// mémoire système. Format de sortie non fixé (`Video::empty()` laisse
+/// `format = AV_PIX_FMT_NONE`) : FFmpeg choisit automatiquement le format
+/// natif du hwframe (NV12 8-bit ou P010LE 10-bit selon la source).
+fn download_hw_frame(
+    src: &ffmpeg::util::frame::video::Video,
+) -> Result<ffmpeg::util::frame::video::Video> {
+    let mut sw = ffmpeg::util::frame::video::Video::empty();
+    let ret = unsafe {
+        ffmpeg::ffi::av_hwframe_transfer_data(sw.as_mut_ptr(), src.as_ptr(), 0)
+    };
+    if ret < 0 {
+        anyhow::bail!("av_hwframe_transfer_data a échoué (code {ret})");
+    }
+    Ok(sw)
 }
 
 /// Décale chaque échantillon 16-bit little-endian de 6 bits vers la gauche :

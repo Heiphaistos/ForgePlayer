@@ -1,10 +1,10 @@
 [package]
-name    = "omni-player"
+name    = "forgeplayer"
 version.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "omniplayer"
+name = "forgeplayer"
 path = "src/main.rs"
 
 [dependencies]
@@ -38,7 +38,7 @@ winapi = { version = "0.3", features = ["winuser", "shellapi"] }
 winresource = "0.1"
 
 [package.metadata.winresource]
-FileDescription = "OmniPlayer — Lecteur Multimédia Ultra-Complet"
-ProductName     = "OmniPlayer"
+FileDescription = "ForgePlayer — Lecteur Multimédia Ultra-Complet"
+ProductName     = "ForgePlayer"
 LegalCopyright  = "MIT"
-OriginalFilename = "omniplayer.exe"
+OriginalFilename = "forgeplayer.exe"

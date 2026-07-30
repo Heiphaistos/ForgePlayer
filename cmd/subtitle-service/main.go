@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"os"
 
-	"omniplayer/pkg/ipc"
+	"forgeplayer/pkg/ipc"
 )
 
 func main() {

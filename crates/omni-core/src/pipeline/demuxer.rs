@@ -1,20 +1,29 @@
 use anyhow::Result;
-use crossbeam_channel::{Receiver, Sender};
+use crossbeam_channel::{bounded, Receiver, Sender};
 use ffmpeg_next as ffmpeg;
 
 use crate::decoder::{
     audio::AudioDecoder, video::VideoDecoder, DecodedAudioFrame, DecodedVideoFrame,
 };
 use crate::decoder::context::DecodeContext;
+use crate::pipeline::video_worker::{self, VideoWorkerMsg};
 use crate::pipeline::{PipelineCommand, PipelineEvent};
 use crate::probe;
 
+/// Profondeur de la queue de paquets vidéo COMPRESSÉS envoyés au thread de
+/// décodage vidéo dédié. `try_send` (jamais bloquant) : si le décodage vidéo
+/// prend du retard, on droppe le paquet plutôt que de bloquer ce thread — sinon
+/// l'audio (lu/décodé ici, sur ce même thread) se retrouverait affamé derrière
+/// un GOP 4K/HDR lent à décoder, exactement le bug qu'on corrige.
+const VIDEO_PKT_QUEUE_DEPTH: usize = 64;
+
 pub fn run_demuxer(
-    path:     &str,
-    cmd_rx:   Receiver<PipelineCommand>,
-    event_tx: Sender<PipelineEvent>,
-    video_tx: Sender<DecodedVideoFrame>,
-    audio_tx: Sender<DecodedAudioFrame>,
+    path:          &str,
+    hw_accel_pref: &str,
+    cmd_rx:        Receiver<PipelineCommand>,
+    event_tx:      Sender<PipelineEvent>,
+    video_tx:      Sender<DecodedVideoFrame>,
+    audio_tx:      Sender<DecodedAudioFrame>,
 ) -> Result<()> {
     let info = probe::probe_file(std::path::Path::new(path))
         .unwrap_or_else(|_| probe::MediaInfo {
@@ -32,14 +41,23 @@ pub fn run_demuxer(
     let _ = event_tx.send(PipelineEvent::MetadataReady(Box::new(info)));
     let _ = event_tx.send(PipelineEvent::DurationKnown(duration));
 
-    // Prefer d3d11va (modern API) on Windows; fall back to dxva2, then software.
-    #[cfg(windows)]
-    let preferred_hw = {
-        use crate::hw_accel::windows::win::is_d3d11va_available;
-        if is_d3d11va_available() { Some("d3d11va") } else { Some("dxva2") }
+    // Réglage Paramètres : "none" désactive tout (échappatoire si un pilote GPU
+    // pose problème), "d3d11va"/"dxva2" force un choix précis, "auto" (défaut)
+    // préfère d3d11va (API moderne) si dispo sinon dxva2.
+    let preferred_hw: Option<&str> = match hw_accel_pref {
+        "none"    => None,
+        "d3d11va" => Some("d3d11va"),
+        "dxva2"   => Some("dxva2"),
+        _ => {
+            #[cfg(windows)]
+            {
+                use crate::hw_accel::windows::win::is_d3d11va_available;
+                if is_d3d11va_available() { Some("d3d11va") } else { Some("dxva2") }
+            }
+            #[cfg(not(windows))]
+            { None }
+        }
     };
-    #[cfg(not(windows))]
-    let preferred_hw: Option<&str> = None;
 
     let mut ctx = DecodeContext::open(path, preferred_hw)?;
 
@@ -71,15 +89,44 @@ pub fn run_demuxer(
         })
     }).unwrap_or(0.0);
 
-    let mut video_dec = v_idx
+    let initial_video_dec = v_idx
         .map(|_| ctx.build_video_decoder().map(|d| VideoDecoder::new(d, v_tb)))
         .transpose()?
         .and_then(|r| r.ok());
+    log::debug!(
+        "DBGPROBE demuxer: v_idx={v_idx:?} a_idx={a_idx:?} video_dec_ok={} ",
+        initial_video_dec.is_some()
+    );
 
-    let mut audio_dec = a_idx
-        .map(|_| ctx.build_audio_decoder().map(|d| AudioDecoder::new(d, a_tb)))
-        .transpose()?
-        .and_then(|r| r.ok());
+    // Décodage vidéo sur son propre thread — voir video_worker.rs. `preview_dec`
+    // reste local à CE thread : la preview post-seek-en-pause décode directement
+    // depuis ctx.format_ctx dans une boucle autonome bornée, indépendante du flux
+    // principal de paquets envoyés au worker.
+    let (video_pkt_tx, video_pkt_rx) = bounded::<VideoWorkerMsg>(VIDEO_PKT_QUEUE_DEPTH);
+    let (eof_ack_tx, eof_ack_rx)     = bounded::<()>(1);
+    let _video_worker = video_worker::spawn(
+        initial_video_dec, video_pkt_rx, video_tx.clone(), event_tx.clone(), eof_ack_tx,
+    )?;
+    let mut preview_dec: Option<VideoDecoder> = None;
+
+    // Une piste audio illisible (codec non supporté, paramètres corrompus) ne
+    // doit jamais tuer toute la lecture — avant, `?` propageait cette erreur et
+    // arrêtait AUSSI la vidéo, ce qui pouvait ressembler à "codec manquant" pour
+    // un fichier par ailleurs parfaitement lisible. On dégrade en vidéo muette
+    // + avis OSD non-bloquant au lieu d'un échec complet.
+    let mut audio_dec = match a_idx {
+        None => None,
+        Some(_) => match ctx.build_audio_decoder().and_then(|d| AudioDecoder::new(d, a_tb)) {
+            Ok(dec) => Some(dec),
+            Err(e) => {
+                log::warn!("piste audio illisible, lecture vidéo seule: {e:#}");
+                let _ = event_tx.send(PipelineEvent::Warning(
+                    "Piste audio illisible (codec non supporté) — lecture sans son.".to_string()
+                ));
+                None
+            }
+        },
+    };
 
     // Décodeurs sous-titres : TOUTES les pistes texte dès le départ. Les paquets ne
     // sont lus qu'une seule fois (en avance sur la lecture) — une activation tardive
@@ -108,6 +155,12 @@ pub fn run_demuxer(
     let mut v_skip_until: Option<f64> = None;
     let mut a_skip_until: Option<f64> = None;
 
+    // DBGPROBE (diagnostic temporaire, RUST_LOG=debug)
+    let dbg_start = std::time::Instant::now();
+    let mut dbg_v_pkts = 0u64;
+    let mut dbg_v_dropped = 0u64;
+    let mut dbg_a_frames = 0u64;
+
     'main: loop {
         // Traite toutes les commandes en attente
         while let Ok(cmd) = cmd_rx.try_recv() {
@@ -122,22 +175,29 @@ pub fn run_demuxer(
                         log::warn!("seek ignoré: {e:#}");
                         continue;
                     }
-                    // Vide les buffers internes des décodeurs pour éviter les artefacts post-seek
-                    if let Some(dec) = &mut video_dec {
-                        let _ = dec.send_eof();
-                        while dec.receive_frame().ok().flatten().is_some() {}
-                    }
+                    // Vide les buffers internes du décodeur audio (local à ce thread)
                     if let Some(dec) = &mut audio_dec {
                         let _ = dec.send_eof();
                         while dec.receive_frame().ok().flatten().is_some() {}
                     }
-                    // Reconstruit les décodeurs pour repartir d'un état propre
-                    video_dec = v_idx
+                    // Reconstruit les décodeurs pour repartir d'un état propre. Le
+                    // décodeur vidéo vit sur le thread worker : on lui envoie le nouveau,
+                    // remplacer l'ancien purge tout état interne (pas besoin de
+                    // send_eof/drain — l'ancien est simplement jeté par le worker).
+                    let new_video_dec = v_idx
                         .and_then(|_| ctx.build_video_decoder().ok())
                         .and_then(|d| VideoDecoder::new(d, v_tb).ok());
+                    let _ = video_pkt_tx.send(VideoWorkerMsg::Reset {
+                        decoder: new_video_dec, skip_until: Some(pos),
+                    });
                     audio_dec = a_idx
                         .and_then(|_| ctx.build_audio_decoder().ok())
                         .and_then(|d| AudioDecoder::new(d, a_tb).ok());
+                    // Décodeur local dédié à la preview post-seek-en-pause (voir plus
+                    // bas) — indépendant de celui envoyé au worker.
+                    preview_dec = v_idx
+                        .and_then(|_| ctx.build_video_decoder().ok())
+                        .and_then(|d| VideoDecoder::new(d, v_tb).ok());
                     preview_after_seek = paused;
                     v_skip_until = Some(pos);
                     a_skip_until = Some(pos);
@@ -175,7 +235,7 @@ pub fn run_demuxer(
                 // position pour que l'affichage se rafraîchisse (les paquets
                 // audio/sous-titres sont ignorés).
                 preview_after_seek = false;
-                if let (Some(vi), Some(dec)) = (v_idx, video_dec.as_mut()) {
+                if let (Some(vi), Some(dec)) = (v_idx, preview_dec.as_mut()) {
                     // Un GOP long (voire un seul keyframe pour tout le fichier) peut
                     // exiger de décoder énormément de frames pour rattraper la cible
                     // depuis la keyframe précédente — pas de limite de PAQUETS totaux
@@ -214,11 +274,20 @@ pub fn run_demuxer(
             continue;
         }
 
-        // Régulation du débit : queues aval pleines = on attend au lieu de décoder tout
+        // Régulation du débit : queues aval pleines = on attend au lieu de lire tout
         // le fichier en avance (sinon drops massifs de frames vidéo et overflow du ring
         // audio). Pas de deadlock : pump_audio draine toujours, pump_video draine aussi
         // en Loading, et PositionChanged est émis dès qu'une frame passe.
-        if video_tx.is_full() || audio_tx.is_full() {
+        //
+        // IMPORTANT : `video_pkt_tx` (paquets COMPRESSÉS envoyés au worker) doit être
+        // inclus ici, pas seulement `video_tx` (frames DÉCODÉES en sortie du worker).
+        // Sans ce check, ce thread — qui ne fait plus de décodage vidéo lui-même —
+        // lit le fichier à la vitesse du disque, remplit `video_pkt_tx` (64) en
+        // quelques millisecondes, puis droppe silencieusement tout paquet vidéo
+        // suivant (try_send) sans jamais ralentir : le fichier entier est lu et
+        // atteint EOF bien avant que la lecture réelle n'ait eu le temps de se
+        // dérouler, ce qui déclenche EndOfStream quasi instantanément.
+        if video_pkt_tx.is_full() || video_tx.is_full() || audio_tx.is_full() {
             std::thread::sleep(std::time::Duration::from_millis(4));
             continue;
         }
@@ -227,7 +296,18 @@ pub fn run_demuxer(
         match packet.read(&mut ctx.format_ctx) {
             Ok(_) => {}
             Err(ffmpeg::Error::Eof) => {
-                flush_decoders(&mut video_dec, &mut audio_dec, &video_tx, &audio_tx);
+                log::debug!(
+                    "DBGPROBE demuxer EOF: wall={:.2}s v_pkts_forwarded={dbg_v_pkts} \
+                     v_pkts_dropped(pkt_tx plein)={dbg_v_dropped} a_frames={dbg_a_frames}",
+                    dbg_start.elapsed().as_secs_f64()
+                );
+                flush_audio_decoder(&mut audio_dec, &audio_tx);
+                // Attend que le worker vidéo ait fini de vider ses frames restantes
+                // avant d'annoncer EndOfStream — sinon les toutes dernières frames
+                // vidéo pourraient arriver après que le player soit passé en EndOfFile
+                // (pump_video n'y draine plus la queue) et ne jamais s'afficher.
+                let _ = video_pkt_tx.send(VideoWorkerMsg::Eof);
+                let _ = eof_ack_rx.recv_timeout(std::time::Duration::from_millis(500));
                 let _ = event_tx.send(PipelineEvent::EndOfStream);
                 break 'main;
             }
@@ -240,20 +320,11 @@ pub fn run_demuxer(
         let stream_idx = packet.stream();
 
         if Some(stream_idx) == v_idx {
-            if let Some(dec) = &mut video_dec {
-                let _ = dec.send_packet(&packet);
-                while let Ok(Some(frame)) = dec.receive_frame() {
-                    // Post-seek : jeter les frames entre la keyframe et la cible
-                    if let Some(su) = v_skip_until {
-                        if frame.pts_secs < su - 0.05 { continue; }
-                        v_skip_until = None;
-                    }
-                    // PositionChanged depuis la vidéo aussi : garantit Loading→Playing
-                    // même si l'audio n'a pas encore produit de frame (ex: début I-frame lourd)
-                    let _ = event_tx.try_send(PipelineEvent::PositionChanged(frame.pts_secs));
-                    let _ = video_tx.try_send(frame);
-                }
-            }
+            // Décodage vidéo délégué au thread worker (jamais bloquant : sous
+            // charge soutenue on droppe le paquet plutôt que d'affamer l'audio
+            // lu juste en dessous, sur CE thread).
+            dbg_v_pkts += 1;
+            if video_pkt_tx.try_send(VideoWorkerMsg::Packet(packet)).is_err() { dbg_v_dropped += 1; }
         } else if Some(stream_idx) == a_idx {
             if let Some(dec) = &mut audio_dec {
                 let _ = dec.send_packet(&packet);
@@ -263,6 +334,7 @@ pub fn run_demuxer(
                         if frame.pts_secs < su - 0.05 { continue; }
                         a_skip_until = None;
                     }
+                    dbg_a_frames += 1;
                     let pos = frame.pts_secs;
                     let _ = event_tx.try_send(PipelineEvent::PositionChanged(pos));
                     // Audio : on attend si nécessaire — ne jamais dropper de frame audio
@@ -367,18 +439,10 @@ fn strip_ass_overrides(s: &str) -> String {
     out.replace("\\N", "\n").replace("\\n", "\n")
 }
 
-fn flush_decoders(
-    video_dec: &mut Option<VideoDecoder>,
+fn flush_audio_decoder(
     audio_dec: &mut Option<AudioDecoder>,
-    video_tx:  &Sender<DecodedVideoFrame>,
     audio_tx:  &Sender<DecodedAudioFrame>,
 ) {
-    if let Some(dec) = video_dec {
-        let _ = dec.send_eof();
-        while let Ok(Some(f)) = dec.receive_frame() {
-            let _ = video_tx.try_send(f);
-        }
-    }
     if let Some(dec) = audio_dec {
         let _ = dec.send_eof();
         while let Ok(Some(f)) = dec.receive_frame() {

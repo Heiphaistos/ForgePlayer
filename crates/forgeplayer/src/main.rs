@@ -11,11 +11,12 @@ use eframe::{NativeOptions, egui::ViewportBuilder, egui_wgpu, wgpu};
 use std::sync::Arc;
 
 fn main() -> Result<()> {
-    env_logger::builder()
-        .filter_level(log::LevelFilter::Info)
-        .init();
+    // `filter_level(Info)` seul ignorait totalement RUST_LOG (aucun appel à
+    // parse_env) — `Env::default_filter_or` lit RUST_LOG s'il est défini,
+    // "info" sinon.
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    log::info!("OmniPlayer v{}", env!("CARGO_PKG_VERSION"));
+    log::info!("ForgePlayer v{}", env!("CARGO_PKG_VERSION"));
 
     // Charge la config utilisateur
     let cfg = config::AppConfig::load();
@@ -26,7 +27,7 @@ fn main() -> Result<()> {
 
     let options = NativeOptions {
         viewport: ViewportBuilder::default()
-            .with_title("OmniPlayer")
+            .with_title("ForgePlayer")
             .with_inner_size([cfg.window_width as f32, cfg.window_height as f32])
             .with_min_inner_size([640.0, 400.0])
             .with_icon(load_icon()),
@@ -46,7 +47,7 @@ fn main() -> Result<()> {
                         wgpu::Limits::default()
                     };
                     wgpu::DeviceDescriptor {
-                        label: Some("omniplayer wgpu device"),
+                        label: Some("forgeplayer wgpu device"),
                         required_features: adapter.features() & optional,
                         required_limits: wgpu::Limits { max_texture_dimension_2d: 8192, ..base_limits },
                         memory_hints: wgpu::MemoryHints::default(),
@@ -60,9 +61,9 @@ fn main() -> Result<()> {
     };
 
     eframe::run_native(
-        "OmniPlayer",
+        "ForgePlayer",
         options,
-        Box::new(|cc| Ok(Box::new(app::OmniApp::new(cc, cfg, initial_file)))),
+        Box::new(|cc| Ok(Box::new(app::ForgeApp::new(cc, cfg, initial_file)))),
     )
     .map_err(|e| anyhow::anyhow!("eframe: {e}"))
 }

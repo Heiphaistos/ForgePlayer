@@ -9,10 +9,10 @@ fn embed_windows_resources() {
     // consommées faute d'appel ici -- l'exe tournait avec l'icône générique par défaut.
     winresource::WindowsResource::new()
         .set_icon("assets/icon.ico")
-        .set("FileDescription", "OmniPlayer — Lecteur Multimédia Ultra-Complet")
-        .set("ProductName", "OmniPlayer")
+        .set("FileDescription", "ForgePlayer — Lecteur Multimédia Ultra-Complet")
+        .set("ProductName", "ForgePlayer")
         .set("LegalCopyright", "MIT")
-        .set("OriginalFilename", "omniplayer.exe")
+        .set("OriginalFilename", "forgeplayer.exe")
         .compile()
         .expect("échec de l'intégration des ressources Windows (icône/métadonnées)");
 }
@@ -24,7 +24,7 @@ fn main() {
     let ffmpeg_dir = env::var("FFMPEG_DIR").unwrap_or_else(|_| "C:/ffmpeg".to_string());
     let ffmpeg_bin = PathBuf::from(&ffmpeg_dir).join("bin");
 
-    // OUT_DIR = target/{profile}/build/omni-player-xxx/out
+    // OUT_DIR = target/{profile}/build/forgeplayer-xxx/out
     // We want  target/{profile}/
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let target_dir = out_dir

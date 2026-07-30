@@ -1,5 +1,5 @@
 <div align="center">
-  <h1>OmniPlayer</h1>
+  <h1>ForgePlayer</h1>
   <p><strong>Lecteur multimédia haute performance sous Windows — pipeline Rust/wgpu + services Go.</strong></p>
 
   ![Version](https://img.shields.io/badge/version-1.4.5-blue)
@@ -13,7 +13,7 @@
 
 ## Description
 
-OmniPlayer est un lecteur multimédia natif Windows construit sur un pipeline Rust entièrement multithreadé. Il utilise FFmpeg 7.x pour le décodage universel, wgpu/DirectX 12 pour le rendu GPU avec shaders WGSL (conversion YUV→RGB), et CPAL pour la sortie audio. Deux services Go légers assurent la recherche de sous-titres via OpenSubtitles et l'indexation de bibliothèque locale avec métadonnées TMDB.
+ForgePlayer est un lecteur multimédia natif Windows construit sur un pipeline Rust entièrement multithreadé. Il utilise FFmpeg 7.x pour le décodage universel, wgpu/DirectX 12 pour le rendu GPU avec shaders WGSL (conversion YUV→RGB), et CPAL pour la sortie audio. Deux services Go légers assurent la recherche de sous-titres via OpenSubtitles et l'indexation de bibliothèque locale avec métadonnées TMDB.
 
 ---
 
@@ -54,7 +54,7 @@ OmniPlayer est un lecteur multimédia natif Windows construit sur un pipeline Ru
 
 ### Option recommandée — Portable ZIP
 
-1. Télécharger la dernière archive `OmniPlayer_v1.3.1_Portable.zip` depuis la [page Releases](https://github.com/heiphaistos44-crypto/OmniPlayer/releases).
+1. Télécharger la dernière archive `ForgePlayer_v1.5.0_Portable.zip` depuis la [page Releases](https://github.com/Heiphaistos/ForgePlayer/releases).
 2. Extraire dans le dossier de votre choix.
 3. Lancer `launch.bat` (démarre les services Go + le lecteur).
 
@@ -88,7 +88,7 @@ build.bat x32          # Architecture 32 bits
 build.bat skip-go      # Ignorer la compilation Go
 ```
 
-Les binaires sont générés dans `dist\` : `OmniPlayer.exe`, `subtitle-service.exe`, `media-indexer.exe` et les DLLs FFmpeg.
+Les binaires sont générés dans `dist\` : `ForgePlayer.exe`, `subtitle-service.exe`, `media-indexer.exe` et les DLLs FFmpeg.
 
 ---
 
@@ -116,7 +116,7 @@ Les binaires sont générés dans `dist\` : `OmniPlayer.exe`, `subtitle-service.
 ## Architecture
 
 ```
-OmniPlayer.exe (Rust)
+ForgePlayer.exe (Rust)
 ├── omni-core      — Démultiplexage FFmpeg, décodage A/V, sync horloge
 ├── omni-renderer  — Rendu wgpu/DX12, shader WGSL YUV→RGB
 ├── omni-audio     — CPAL output, rubato resampler, ring buffer lock-free

@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableDelayedExpansion
-title OmniPlayer — Setup
+title ForgePlayer — Setup
 echo.
 echo  ██████  ███    ███ ███    ██ ██ ██████  ██       █████  ██    ██ ███████ ██████
 echo ██    ██ ████  ████ ████   ██ ██ ██   ██ ██      ██   ██  ██  ██  ██      ██   ██
@@ -8,7 +8,7 @@ echo ██    ██ ██ ████ ██ ██ ██  ██ ██ �
 echo ██    ██ ██  ██  ██ ██  ██ ██ ██ ██      ██      ██   ██    ██    ██      ██   ██
 echo  ██████  ██      ██ ██   ████ ██ ██      ███████ ██   ██    ██    ███████ ██   ██
 echo.
-echo  Setup des dependances — OmniPlayer
+echo  Setup des dependances — ForgePlayer
 echo =============================================================
 
 REM ── Vérification Rust ──────────────────────────────────────────

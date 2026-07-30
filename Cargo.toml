@@ -3,14 +3,14 @@ members = [
     "crates/omni-core",
     "crates/omni-renderer",
     "crates/omni-audio",
-    "crates/omni-player",
+    "crates/forgeplayer",
 ]
 resolver = "2"
 
 [workspace.package]
-version  = "1.4.7"
+version  = "1.5.0"
 edition  = "2021"
-authors  = ["OmniPlayer"]
+authors  = ["ForgePlayer"]
 license  = "MIT"
 
 [workspace.dependencies]

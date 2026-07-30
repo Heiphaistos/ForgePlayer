@@ -1,5 +1,6 @@
 pub mod clock;
 pub mod demuxer;
+pub mod video_worker;
 
 use anyhow::Result;
 use crossbeam_channel::{bounded, Receiver, Sender};
@@ -27,6 +28,9 @@ pub enum PipelineEvent {
     BufferingProgress(u8),   // 0–100
     EndOfStream,
     Error(String),
+    /// Problème non-fatal (ex: piste audio illisible) — la lecture continue en
+    /// mode dégradé, l'UI affiche juste un avis transitoire (OSD).
+    Warning(String),
     MetadataReady(Box<crate::probe::MediaInfo>),
     /// Ligne de sous-titre intégrée (ordinal piste, texte, pts_start, pts_end en secondes).
     /// Toutes les pistes texte sont décodées ; le player filtre par piste active.
@@ -46,7 +50,8 @@ pub struct MediaPipeline {
 
 impl MediaPipeline {
     /// Lance le pipeline de décodage dans des threads dédiés.
-    pub fn launch(path: String) -> Result<Self> {
+    /// `hw_accel_pref` : "auto"/"d3d11va"/"dxva2"/"none" (réglage Paramètres).
+    pub fn launch(path: String, hw_accel_pref: String) -> Result<Self> {
         let (cmd_tx, cmd_rx)         = bounded::<PipelineCommand>(16);
         let (event_tx, event_rx)     = bounded::<PipelineEvent>(64);
         let (video_tx, video_rx)     = bounded::<DecodedVideoFrame>(VIDEO_QUEUE_DEPTH);
@@ -58,7 +63,7 @@ impl MediaPipeline {
             .name("omni-demuxer".into())
             .spawn(move || {
                 if let Err(e) = demuxer::run_demuxer(
-                    &path_clone, cmd_rx, event_tx, video_tx, audio_tx,
+                    &path_clone, &hw_accel_pref, cmd_rx, event_tx, video_tx, audio_tx,
                 ) {
                     log::error!("demuxer: {e:#}");
                     // Remonte l'erreur à l'UI — sinon le player reste bloqué en Playing

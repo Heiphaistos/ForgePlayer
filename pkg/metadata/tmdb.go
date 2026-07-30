@@ -37,7 +37,7 @@ type Client struct {
 }
 
 func NewTMDBClient(apiKey, lang string) *Client {
-	cacheDir := filepath.Join(os.TempDir(), "omniplayer", "metadata")
+	cacheDir := filepath.Join(os.TempDir(), "forgeplayer", "metadata")
 	_ = os.MkdirAll(cacheDir, 0755)
 	return &Client{
 		apiKey:   apiKey,
