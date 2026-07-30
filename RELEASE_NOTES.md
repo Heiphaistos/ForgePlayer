@@ -2,6 +2,30 @@
 
 ---
 
+## v1.5.0 (2026-07-30) — Vrai décodage matériel 4K/HDR (fin des coupures audio) + renommage ForgePlayer
+
+### Corrections critiques (lecture 4K/HDR)
+
+- **[CRITIQUE] "Accélération matérielle" était un placebo depuis toujours.** Le réglage d3d11va/dxva2 des Paramètres n'activait en réalité que le threading logiciel FFmpeg — tout décodage, y compris 4K HEVC/AV1 10-bit HDR, tournait 100% sur CPU. Vrai décodage D3D11VA/DXVA2 implémenté (`av_hwdevice_ctx_create` + callback `get_format`, motif officiel FFmpeg), repli logiciel automatique si le GPU/pilote ne supporte pas.
+- **[CRITIQUE] Démux + décodage vidéo + décodage audio partageaient un seul thread.** Un décodage vidéo 4K lourd bloquait le décodage audio suivant → coupures son sur les fichiers 4K/HDR. Décodage vidéo déplacé sur un thread dédié.
+- **[HAUTE] Deux régressions trouvées et corrigées en testant les fixes ci-dessus** : la lecture fonçait à la vitesse disque une fois débarrassée du goulot vidéo (fix : régulation du débit étendue à la nouvelle queue) ; la fin de lecture (EndOfFile) arrivait avant que l'affichage temps réel des dernières frames n'ait rattrapé (fix : attend que la position réelle rattrape la durée).
+- Réglage "Accélération matérielle" des Paramètres câblé pour de vrai (était lu nulle part) — "Aucune" est maintenant une vraie échappatoire.
+- Piste audio illisible ne bloque plus toute la lecture (vidéo continue, avis à l'écran au lieu d'un échec total).
+- `RUST_LOG` était silencieusement ignoré — corrigé.
+- Qualité de conversion chroma 4K légèrement améliorée (BILINEAR → BICUBIC).
+
+Vérifié sur GPU réel (RTX 3070) avec un fichier 3840×2160 HEVC Main10 HDR10 + EAC3 5.1 généré exprès : décodage D3D11VA confirmé actif, cadence temps réel confirmée, rendu 4K vérifié par capture d'écran réelle.
+
+### Renommage
+
+**OmniPlayer devient ForgePlayer** — nouveau nom partout : fenêtre, exécutable (`ForgePlayer.exe`), dépôt GitHub (`Heiphaistos/ForgePlayer`), installateur, dossier de configuration, scripts, documentation. Les installations existantes se mettent à jour en place (même identifiant d'installeur).
+
+### Paquets Linux
+
+Reconstruits sur Ubuntu 22.04 (base glibc plus ancienne que la précédente build Debian 13) — meilleure compatibilité attendue avec les systèmes plus anciens, sans garantie exhaustive (pas testé sur d'autres distributions cette fois).
+
+---
+
 ## v1.4.7 (2026-07-27) — Premiers builds Linux (.deb/AppImage) + installateur Windows + fixes build.bat
 
 ### Corrections critiques (build.bat)
