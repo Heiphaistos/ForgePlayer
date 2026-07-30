@@ -93,6 +93,11 @@ impl HwAccelContext {
             ctx.set_threading(ffmpeg::codec::threading::Config {
                 kind:  ffmpeg::codec::threading::Type::Frame,
                 count: num_cpus(),
+                // `..Default::default()` plutôt qu'un littéral complet : le champ
+                // `safe` n'existe que pour FFmpeg < 6.0 (cfg côté patch ffmpeg-next),
+                // absent sur la build Windows (FFmpeg 8.x via BtbN) mais requis sur
+                // Linux (FFmpeg 4.4.2 via apt Ubuntu 22.04) — portable dans les deux cas.
+                ..Default::default()
             });
         }
 
