@@ -21,14 +21,18 @@ pub struct HdrTonemapper {
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ToneMapParams {
     pub mode:          u32,
+    /// Pic de luminance du contenu, en nits.
     pub max_luminance: f32,
     pub exposure:      f32,
-    pub _pad:          f32,
+    /// Fonction de transfert de la source : 1 = PQ (SMPTE ST.2084),
+    /// 2 = HLG (ARIB STD-B67). Le shader applique l'EOTF correspondante —
+    /// appliquer la mauvaise courbe écrase l'image (trop sombre ou brûlée).
+    pub transfer:      u32,
 }
 
 impl ToneMapParams {
     pub fn default_hdr() -> Self {
-        Self { mode: 1, max_luminance: 1000.0, exposure: 1.0, _pad: 0.0 }
+        Self { mode: 1, max_luminance: 1000.0, exposure: 1.0, transfer: 1 }
     }
 }
 

@@ -43,11 +43,11 @@ impl HdrOffscreen {
 pub struct VideoPaintCallback {
     pub frame:         SharedFrame,
     pub color_space:   u32,   // 0=BT601, 1=BT709, 2=BT2020
-    /// Vrai si le contenu actuellement affiché est HDR 10-bit — état persistant
-    /// côté app (pas seulement "y a-t-il un nouveau frame ce tick"), car le
-    /// chemin de rendu doit rester cohérent même sur les repaints sans
-    /// nouvelle frame (pause, throttling).
-    pub is_hdr:        bool,
+    /// Fonction de transfert du flux : 0 = SDR (rendu direct), 1 = PQ,
+    /// 2 = HLG (rendu en deux passes avec tone mapping). Vient des métadonnées
+    /// du flux, jamais de la profondeur de bits — un flux 10-bit BT.709 est du
+    /// SDR et ressortirait brûlé s'il passait par le tone mapping.
+    pub transfer:      u32,
     pub tonemap_mode:  u32,
     pub max_luminance: f32,
 }
@@ -68,7 +68,7 @@ impl egui_wgpu::CallbackTrait for VideoPaintCallback {
             }
         }
 
-        if self.is_hdr {
+        if self.transfer != 0 {
             // Chemin HDR : passe 1 (YUV→RGB PQ vers texture offscreen) encodée
             // ici, car paint() ne reçoit qu'un seul RenderPass déjà lié au
             // swapchain — impossible d'y rediriger la sortie de cette passe.
@@ -92,7 +92,7 @@ impl egui_wgpu::CallbackTrait for VideoPaintCallback {
                             mode: self.tonemap_mode,
                             max_luminance: self.max_luminance.max(1.0),
                             exposure: 1.0,
-                            _pad: 0.0,
+                            transfer: self.transfer,
                         });
                     }
                 }
@@ -108,7 +108,7 @@ impl egui_wgpu::CallbackTrait for VideoPaintCallback {
         rp:   &mut wgpu::RenderPass<'static>,
         resources: &egui_wgpu::CallbackResources,
     ) {
-        if self.is_hdr {
+        if self.transfer != 0 {
             if let Some(tonemapper) = resources.get::<HdrTonemapper>() {
                 tonemapper.render(rp);
             }

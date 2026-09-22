@@ -19,12 +19,21 @@ pub enum PixelFormat {
     /// des textures normalisées 8-bit) de fonctionner sans changement — le
     /// ratio noir/blanc/plage limitée est identique en 8 et 10 bits.
     Yuv420p10le,
-    #[allow(dead_code)] P010Le, // réservé : semi-planaire 10-bit (non produit actuellement)
+    /// Semi-planaire 10-bit (Y 16-bit + UV entrelacé 16-bit, valeurs alignées
+    /// sur les bits hauts) — sortie native du décodage matériel 10-bit,
+    /// envoyée au GPU sans conversion.
+    P010Le,
     Rgba,        // fallback RGBA
 }
 
 impl PixelFormat {
+    /// Vrai si les échantillons sont stockés sur 16 bits (source 10-bit).
     pub fn is_hdr10bit(self) -> bool {
-        matches!(self, PixelFormat::Yuv420p10le)
+        matches!(self, PixelFormat::Yuv420p10le | PixelFormat::P010Le)
+    }
+
+    /// Vrai si la chroma est entrelacée dans un seul plan (NV12 / P010).
+    pub fn is_semi_planar(self) -> bool {
+        matches!(self, PixelFormat::Nv12 | PixelFormat::P010Le)
     }
 }

@@ -43,17 +43,22 @@ impl VideoDecoder {
         })
     }
 
-    /// Format cible pour le scaler : préserve les 10 bits pour les sources HDR
-    /// (PQ/HLG déjà en 10-bit) au lieu de tout tronquer en 8-bit YUV420P — sinon
-    /// le HDR est décodé mais toujours écrasé en SDR avant même le rendu.
-    /// Tout le reste (immense majorité SDR 8-bit) va en YUV420P, inchangé.
+    /// Format cible pour le scaler. Règle : ne JAMAIS convertir ce que le GPU
+    /// sait déjà afficher. NV12 et P010LE (sorties natives du décodage
+    /// matériel D3D11VA/DXVA2) partent directement au renderer, comme le fait
+    /// VLC — une conversion swscale d'une image 4K coûte plusieurs
+    /// millisecondes par frame sur un seul cœur, soit la cause directe des
+    /// saccades 4K/2K. Le 10-bit planaire reste préservé en 10-bit ; tout le
+    /// reste (formats exotiques) retombe en YUV420P.
     fn desired_target(src: ffmpeg::format::Pixel) -> ffmpeg::format::Pixel {
         use ffmpeg::format::Pixel::*;
         match src {
+            // Déjà affichables tels quels : zéro conversion.
+            YUV420P | NV12 | P010LE => src,
             YUV420P10LE | YUV420P10BE
             | YUV422P10LE | YUV422P10BE
             | YUV444P10LE | YUV444P10BE
-            | P010LE | P010BE => YUV420P10LE,
+            | P010BE => YUV420P10LE,
             _ => YUV420P,
         }
     }
@@ -195,6 +200,17 @@ fn extract_planes(frame: &ffmpeg::util::frame::video::Video) -> (Vec<Vec<u8>>, V
             let y  = frame.data(0)[..y_stride * h].to_vec();
             let uv = frame.data(1)[..uv_stride * (h / 2)].to_vec();
             (vec![y, uv], vec![y_stride, uv_stride], PixelFormat::Nv12)
+        }
+        ffmpeg::format::Pixel::P010LE => {
+            // Sortie native du décodage matériel 10-bit : Y 16-bit + UV
+            // entrelacé 16-bit, valeurs déjà alignées sur les bits hauts.
+            // Aucun décalage, aucune conversion — upload direct.
+            let h = frame.height() as usize;
+            let y_stride  = frame.stride(0);
+            let uv_stride = frame.stride(1);
+            let y  = frame.data(0)[..y_stride * h].to_vec();
+            let uv = frame.data(1)[..uv_stride * (h / 2)].to_vec();
+            (vec![y, uv], vec![y_stride, uv_stride], PixelFormat::P010Le)
         }
         _ => {
             // Fallback: data du plan 0 en RGBA (après conversion SwsContext)

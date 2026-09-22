@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use crossbeam_channel::{Receiver, Sender};
 use ffmpeg_next as ffmpeg;
 
@@ -73,7 +75,16 @@ fn run(
                         v_skip_until = None;
                     }
                     let _ = event_tx.try_send(PipelineEvent::PositionChanged(frame.pts_secs));
-                    if video_tx.try_send(frame).is_err() { n_frames_dropped += 1; }
+                    // Contre-pression, pas perte sèche : une frame qui ne rentre
+                    // pas dans la file est une frame FUTURE (le décodage a pris
+                    // de l'avance), pas une frame en retard — la jeter fait
+                    // sauter l'image alors qu'il suffit d'attendre que l'UI en
+                    // consomme une. Le délai de garde évite tout blocage si plus
+                    // personne ne draine (pause, fermeture) ; le thread demuxer
+                    // ralentit alors tout seul, sa file de paquets se remplissant.
+                    if video_tx.send_timeout(frame, Duration::from_millis(100)).is_err() {
+                        n_frames_dropped += 1;
+                    }
                 }
             }
             VideoWorkerMsg::Eof => {

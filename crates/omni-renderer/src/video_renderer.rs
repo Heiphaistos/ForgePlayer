@@ -1,7 +1,7 @@
 use anyhow::Result;
 use wgpu::{util::DeviceExt, *};
 
-use crate::frame_upload::YuvTextures;
+use crate::frame_upload::{TexLayout, YuvTextures};
 use omni_core::decoder::DecodedVideoFrame;
 
 const SHADER_SRC: &str = include_str!("../../../assets/shaders/yuv_to_rgb.wgsl");
@@ -22,6 +22,11 @@ pub struct VideoRenderer {
     uniform_bg:        BindGroup,
     #[allow(dead_code)] uniform_bgl: BindGroupLayout,
     current_color_space: u32,  // 0=BT601, 1=BT709, 2=BT2020
+    /// Disposition chroma du dernier frame uploadé — recopiée dans les
+    /// uniforms (`offset.x`) pour que le shader sache s'il doit lire V dans
+    /// une troisième texture (planaire) ou dans le canal G de la deuxième
+    /// (semi-planaire NV12/P010).
+    current_semi_planar: bool,
     /// Vrai si le device a accordé `TEXTURE_FORMAT_16BIT_NORM` — sinon le
     /// contenu HDR 10-bit est affiché en 8-bit (repli silencieux, pas pire
     /// qu'avant cette fonctionnalité, jamais un crash).
@@ -41,6 +46,11 @@ struct ColorUniforms {
 }
 
 impl ColorUniforms {
+    fn with_semi(mut self, semi: bool) -> Self {
+        self.offset[0] = if semi { 1.0 } else { 0.0 };
+        self
+    }
+
     // BT.601 limited (contenu SD / DVD)
     // R = 1.164*y + 1.596*v, G = 1.164*y - 0.392*u - 0.813*v, B = 1.164*y + 2.017*u
     fn bt601() -> Self {
@@ -196,6 +206,7 @@ impl VideoRenderer {
             uniform_bg,
             uniform_bgl,
             current_color_space: 1,  // BT.709 par défaut
+            current_semi_planar: false,
             supports_16bit: device.features().contains(Features::TEXTURE_FORMAT_16BIT_NORM),
         })
     }
@@ -203,29 +214,42 @@ impl VideoRenderer {
     /// Met à jour l'espace colorimétrique (0=BT601, 1=BT709, 2=BT2020).
     pub fn set_color_space(&mut self, queue: &Queue, cs: u32) {
         if self.current_color_space == cs { return; }
-        let uniforms = match cs {
+        self.current_color_space = cs;
+        self.write_uniforms(queue);
+    }
+
+    fn write_uniforms(&self, queue: &Queue) {
+        let uniforms = match self.current_color_space {
             0 => ColorUniforms::bt601(),
             2 => ColorUniforms::bt2020(),
             _ => ColorUniforms::bt709(),
-        };
+        }
+        .with_semi(self.current_semi_planar);
         queue.write_buffer(&self.uniform_buf, 0, bytemuck::bytes_of(&uniforms));
-        self.current_color_space = cs;
     }
 
     /// Met à jour les textures avec un nouveau frame.
     pub fn upload_frame(&mut self, device: &Device, queue: &Queue, frame: &DecodedVideoFrame) {
+        let semi = frame.format.is_semi_planar();
+        if semi != self.current_semi_planar {
+            self.current_semi_planar = semi;
+            self.write_uniforms(queue);
+        }
+
         let textures = YuvTextures::ensure(
             self.yuv_textures.take(),
             device,
             frame.width,
             frame.height,
-            frame.format.is_hdr10bit() && self.supports_16bit,
+            TexLayout { semi, bits16: frame.format.is_hdr10bit() && self.supports_16bit },
         );
         textures.upload(queue, frame);
 
         let yv = textures.y.create_view(&Default::default());
         let uv = textures.u.create_view(&Default::default());
-        let vv = textures.v.create_view(&Default::default());
+        // Chroma entrelacée : la même texture RG sert aux deux slots, le shader
+        // n'échantillonne alors que le slot U (canaux R et G).
+        let vv = if semi { uv.clone() } else { textures.v.create_view(&Default::default()) };
 
         self.bind_group = Some(device.create_bind_group(&BindGroupDescriptor {
             label:   Some("yuv_bg"),

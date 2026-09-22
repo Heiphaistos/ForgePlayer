@@ -24,6 +24,10 @@ pub struct VideoStreamInfo {
     pub fps:        f64,
     pub bit_rate:   i64,
     pub hdr:        bool,
+    /// Fonction de transfert : 0 = SDR, 1 = PQ (SMPTE ST.2084), 2 = HLG.
+    /// C'est elle, et non la profondeur de bits, qui détermine si le rendu
+    /// doit passer par le tone mapping — un flux 10-bit BT.709 reste du SDR.
+    pub transfer:   u8,
     pub color_space: String,
 }
 
@@ -90,11 +94,12 @@ pub fn probe_file(path: &Path) -> Result<MediaInfo> {
 
                     // Détection HDR via color space / color transfer
                     let color_space = format!("{:?}", dec.color_space());
-                    let hdr = matches!(
-                        dec.color_transfer_characteristic(),
-                        ffmpeg::color::TransferCharacteristic::SMPTE2084
-                            | ffmpeg::color::TransferCharacteristic::ARIB_STD_B67
-                    );
+                    let transfer = match dec.color_transfer_characteristic() {
+                        ffmpeg::color::TransferCharacteristic::SMPTE2084   => 1u8,
+                        ffmpeg::color::TransferCharacteristic::ARIB_STD_B67 => 2u8,
+                        _ => 0u8,
+                    };
+                    let hdr = transfer != 0;
 
                     video_info = Some(VideoStreamInfo {
                         index:      stream.index(),
@@ -104,6 +109,7 @@ pub fn probe_file(path: &Path) -> Result<MediaInfo> {
                         fps:        fps_f,
                         bit_rate:   dec.bit_rate() as i64,
                         hdr,
+                        transfer,
                         color_space,
                     });
                 }

@@ -110,4 +110,30 @@ Format par entrée : `[STATUT] Zone — description`. STATUT ∈ {FIXED, OPEN, T
 
 ---
 
+## v1.6.0 (2026-09-23) — 4K/2K saccadé + HDR « hyper éblouissant »
+
+### Corrigé
+
+- [FIXED] **HDR brûlé (cause principale)** — `assets/shaders/hdr_tonemap.wgsl` définissait `pq_to_linear()` mais ne l'appelait JAMAIS. Le signal PQ (0..1, non linéaire) était directement multiplié par `exposure / max_luminance * 10000` (soit ×10 avec les valeurs par défaut) puis tone-mappé : tout ce qui dépassait 10 % de code PQ saturait à blanc. Shader réécrit sur la chaîne standard (celle de VLC/libplacebo) : EOTF PQ ou HLG → luminance absolue en nits → normalisation sur le blanc diffus 203 nits (ITU-R BT.2408) → tone mapping (Reinhard étendu / ACES / Hable) → gamut BT.2020 → BT.709 → encodage sRGB exact.
+- [FIXED] **Tout flux 10-bit était traité comme du HDR** — `video_is_hdr` venait de `PixelFormat::is_hdr10bit()` (profondeur de bits). Un fichier 10-bit BT.709 (HEVC Main10 SDR, très courant) partait donc dans le tone mapping PQ et ressortait brûlé. Le chemin HDR suit maintenant la fonction de transfert réelle du flux (`VideoStreamInfo::transfer` : 0 SDR, 1 PQ, 2 HLG), lue dans les métadonnées.
+- [FIXED] **HLG traité comme du PQ** — la courbe HLG est maintenant appliquée séparément (OETF inverse + OOTF système gamma 1.2).
+- [FIXED] **Conversion CPU par frame sur tout le décodage matériel (cause des saccades 4K/2K)** — les frames rapatriées du GPU (NV12 en 8-bit, P010LE en 10-bit) passaient systématiquement par `SwsContext` (NV12→YUV420P, P010→YUV420P10LE) puis, en 10-bit, par une passe supplémentaire `shift_10_to_16` avec allocation d'un tampon de 24 Mo — plusieurs millisecondes de CPU mono-thread par image en 4K. NV12 et P010 partent maintenant tels quels au GPU (textures RG semi-planaires, `TexLayout`), comme le fait VLC : zéro conversion, zéro allocation supplémentaire.
+- [FIXED] **Frames futures jetées au lieu d'attendre** — `video_worker` faisait `try_send` sur la file de frames décodées : quand le décodage prenait de l'avance, les images étaient perdues (102 sur 480 mesurées sur un 4K HDR 24p) alors qu'il suffisait d'attendre que l'UI en consomme une. Remplacé par `send_timeout(100 ms)` (contre-pression, le délai de garde évite tout blocage en pause/fermeture) : **0 frame perdue sur 480**.
+
+### Vérifié (PC dev, RTX 3070, D3D11VA actif)
+
+- `real_hdr10_4k_24p_av.mp4` — vrai contenu gradé PQ (Netflix *Chimera*, CC-BY, ré-encodé HEVC Main10 BT.2020/PQ 45 Mbps) + piste audio : 40 s de lecture, `pos` suit `wall` à ±10 ms, **1 frame perdue sur 960**, audio maître, tampon audio 3,5 s stable. Capture d'écran : image correctement exposée, plus de brûlure.
+- `hdr10_4k_motion.mp4` (4K HDR10 24p, 40 Mbps) : **0 frame perdue sur 480**, `pos == wall` tout du long.
+- `hdr10_4k.mp4` (rampe PQ noir→blanc 4K) : dégradé complet visible de bout en bout (avant : quasi tout blanc).
+- `sdr10_4k.mp4` (4K **10-bit BT.709 SDR**) : aucun badge HDR, aucun tone mapping, couleurs normales — la régression « 10-bit = HDR » ne se produit plus.
+
+### Reste à faire
+
+- [ ] Utiliser les métadonnées de mastering réelles (MaxCLL / master-display) comme pic de tone mapping, au lieu de la valeur figée `max_luminance` de la config.
+- [ ] Vérifier HLG sur un vrai fichier HLG (aucun disponible ici pour l'instant).
+- [ ] Plage de couleur complète (full/JPEG range) : le shader YUV suppose toujours du limited range.
+- [ ] 10-bit décodé en logiciel : la passe CPU `shift_10_to_16` subsiste (chemin de repli uniquement, le décodage matériel ne l'emprunte plus).
+- [ ] Zéro-copie D3D11 ↔ wgpu (toujours « hw decode + copy-back »).
+
+
 ## Journal chronologique

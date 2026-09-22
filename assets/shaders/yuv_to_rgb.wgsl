@@ -35,8 +35,19 @@ struct ColorTransform {
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let y_raw = textureSample(y_tex, samp, in.tex_coord).r;
-    let u_raw = textureSample(u_tex, samp, in.tex_coord).r;
-    let v_raw = textureSample(v_tex, samp, in.tex_coord).r;
+
+    // Deux dispositions de chroma :
+    //  - planaire (YUV420P / YUV420P10LE) : U et V dans deux textures R.
+    //  - semi-planaire (NV12 / P010, sortie directe du décodeur matériel) :
+    //    U et V entrelacés dans une seule texture RG, liée aux deux slots.
+    // `color.offset.x` porte le drapeau (uniforme, donc branche sûre pour
+    // textureSample).
+    let uv_tex = textureSample(u_tex, samp, in.tex_coord);
+    var u_raw = uv_tex.r;
+    var v_raw = uv_tex.g;
+    if (color.offset.x < 0.5) {
+        v_raw = textureSample(v_tex, samp, in.tex_coord).r;
+    }
 
     // Subtract limited-range offsets. The matrix handles Y/UV scaling.
     // Y ∈ [16/255, 235/255], UV ∈ [16/255, 240/255] centred at 128/255.
