@@ -163,6 +163,14 @@ Format par entrée : `[STATUT] Zone — description`. STATUT ∈ {FIXED, OPEN, T
   - VLC sur le fichier **full range** : 0,085 / 0,334 / 0,538 / **1,000**
 - Les deux rendus de ForgePlayer sont identiques et collent à la source ; **VLC, lui, ignore le drapeau `pc`** sur ce fichier (noirs écrasés, hautes lumières écrêtées). Sur ce point précis le lecteur est plus juste que VLC.
 
+### Passe CPU supprimée sur le 10-bit logiciel (2026-09-23, itération 6 de la boucle)
+
+- [FIXED] Le 10-bit décodé en logiciel subissait `shift_10_to_16` : relecture de tout le plan, décalage de 6 bits échantillon par échantillon et **réallocation de 24 Mo par image en 4K**, uniquement pour que le shader retombe sur la bonne échelle. Les plans partent maintenant tels que FFmpeg les produit (valeur 10 bits dans les bits bas) et le shader applique le facteur `65535/1023` (`color.offset.z`) — une multiplication par texel, gratuite sur GPU.
+- Bonus de justesse : l'ancien décalage donnait `valeur × 64 / 65535` = division par 1023,98 au lieu de 1023 (−0,06 %). Le facteur est maintenant exact.
+- Repli 8 bits (GPU sans `TEXTURE_FORMAT_16BIT_NORM`) adapté : `narrow_16_to_8` prend le décalage en paramètre (2 pour le 10-bit aligné bas de FFmpeg, 8 pour le P010 aligné haut du décodage matériel).
+- **Mesure de justesse** : même image fixe encodée en 8 bits et en 10 bits, quantiles p5→p95 — rendu 10 bits **0,002** d'écart avec le rendu 8 bits, et 0,026 avec le PNG source (même écart systématique que le 8 bits, dû à la capture et au ré-encodage). Aucune régression visuelle.
+- **Mesure de coût CPU : non concluante** sur cette machine. Secondes CPU pour 20 s de lecture 4K 10-bit en décodage 100 % logiciel : 21,67 / 22,00 avant, 23,16 / 16,66 après — le décodage HEVC logiciel domine et le bruit dépasse le gain. Le gain reste structurel (une passe plein cadre et une allocation de 24 Mo par image en moins) ; il ne concerne que le chemin logiciel, le décodage matériel n'y passait déjà plus.
+
 ### Reste à faire
 
 - [ ] Utiliser les métadonnées de mastering réelles (MaxCLL / master-display) comme pic de tone mapping, au lieu de la valeur figée `max_luminance` de la config.

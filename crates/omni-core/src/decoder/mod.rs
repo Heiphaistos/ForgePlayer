@@ -13,11 +13,9 @@ pub enum PixelFormat {
     Yuv422p,     // planar YUV 4:2:2
     Yuv444p,     // planar YUV 4:4:4
     Nv12,        // semi-planar NV12 (HW accel output)
-    /// Planar YUV 4:2:0 10-bit (HDR10/HLG). Échantillons 16-bit, décalés de 6
-    /// bits vers la gauche (convention P010) : la valeur 10-bit d'origine
-    /// occupe les bits hauts, ce qui permet au shader existant (pensé pour
-    /// des textures normalisées 8-bit) de fonctionner sans changement — le
-    /// ratio noir/blanc/plage limitée est identique en 8 et 10 bits.
+    /// Planar YUV 4:2:0 10-bit (sortie du décodage logiciel). Échantillons
+    /// 16 bits avec la valeur 10 bits dans les bits BAS, tels que FFmpeg les
+    /// produit : la remise à l'échelle est faite par le shader.
     Yuv420p10le,
     /// Semi-planaire 10-bit (Y 16-bit + UV entrelacé 16-bit, valeurs alignées
     /// sur les bits hauts) — sortie native du décodage matériel 10-bit,
@@ -30,6 +28,17 @@ impl PixelFormat {
     /// Vrai si les échantillons sont stockés sur 16 bits (source 10-bit).
     pub fn is_hdr10bit(self) -> bool {
         matches!(self, PixelFormat::Yuv420p10le | PixelFormat::P010Le)
+    }
+
+    /// Facteur à appliquer aux échantillons lus depuis la texture pour
+    /// retomber sur une valeur normalisée 0..1. Le 10-bit planaire de FFmpeg
+    /// est aligné sur les bits BAS (valeur/1023 stockée dans un mot 16 bits),
+    /// le P010 du décodage matériel sur les bits HAUTS (déjà normalisé).
+    pub fn sample_scale(self) -> f32 {
+        match self {
+            PixelFormat::Yuv420p10le => 65535.0 / 1023.0,
+            _ => 1.0,
+        }
     }
 
     /// Vrai si la chroma est entrelacée dans un seul plan (NV12 / P010).

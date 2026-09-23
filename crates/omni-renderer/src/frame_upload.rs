@@ -97,9 +97,9 @@ impl YuvTextures {
             // Planaire 10-bit sur un GPU sans TEXTURE_FORMAT_16BIT_NORM :
             // on garde l'octet haut de chaque échantillon (÷256).
             PixelFormat::Yuv420p10le => {
-                let y8 = narrow_16_to_8(&frame.planes[0], frame.strides[0], self.width as usize, self.height as usize, 1);
-                let u8_ = narrow_16_to_8(&frame.planes[1], frame.strides[1], cw as usize, ch as usize, 1);
-                let v8 = narrow_16_to_8(&frame.planes[2], frame.strides[2], cw as usize, ch as usize, 1);
+                let y8 = narrow_16_to_8(&frame.planes[0], frame.strides[0], self.width as usize, self.height as usize, 1, 2);
+                let u8_ = narrow_16_to_8(&frame.planes[1], frame.strides[1], cw as usize, ch as usize, 1, 2);
+                let v8 = narrow_16_to_8(&frame.planes[2], frame.strides[2], cw as usize, ch as usize, 1, 2);
                 upload(&self.y, &y8, self.width as usize, self.width, self.height);
                 upload(&self.u, &u8_, cw as usize, cw, ch);
                 upload(&self.v, &v8, cw as usize, cw, ch);
@@ -116,8 +116,8 @@ impl YuvTextures {
                 upload(&self.u, &frame.planes[1], frame.strides[1], cw, ch);
             }
             PixelFormat::P010Le => {
-                let y8 = narrow_16_to_8(&frame.planes[0], frame.strides[0], self.width as usize, self.height as usize, 1);
-                let uv8 = narrow_16_to_8(&frame.planes[1], frame.strides[1], cw as usize, ch as usize, 2);
+                let y8 = narrow_16_to_8(&frame.planes[0], frame.strides[0], self.width as usize, self.height as usize, 1, 8);
+                let uv8 = narrow_16_to_8(&frame.planes[1], frame.strides[1], cw as usize, ch as usize, 2, 8);
                 upload(&self.y, &y8, self.width as usize, self.width, self.height);
                 upload(&self.u, &uv8, cw as usize * 2, cw, ch);
             }
@@ -128,17 +128,21 @@ impl YuvTextures {
     }
 }
 
-/// Réduit des échantillons 16-bit alignés sur les bits hauts (P010) en 8-bit
-/// tassés, en respectant le stride source (padding de fin de ligne possible).
-/// `comps` = nombre de composantes par texel (1 = plan luma/chroma planaire,
-/// 2 = chroma entrelacée).
-fn narrow_16_to_8(data: &[u8], src_stride: usize, w: usize, h: usize, comps: usize) -> Vec<u8> {
+/// Réduit des échantillons 16-bit en 8-bit tassés, en respectant le stride
+/// source (padding de fin de ligne possible). `comps` = composantes par texel
+/// (1 = plan planaire, 2 = chroma entrelacée). `shift` = décalage à droite
+/// pour ramener la valeur sur 8 bits : 2 pour du 10-bit aligné sur les bits
+/// bas (FFmpeg), 8 pour du 16-bit aligné sur les bits hauts (P010).
+/// Chemin de repli uniquement (GPU sans `TEXTURE_FORMAT_16BIT_NORM`).
+fn narrow_16_to_8(data: &[u8], src_stride: usize, w: usize, h: usize, comps: usize, shift: u32) -> Vec<u8> {
     let mut out = Vec::with_capacity(w * h * comps);
     for row in 0..h {
         let row_start = row * src_stride;
         for i in 0..w * comps {
-            let idx = row_start + i * 2 + 1; // octet haut de l'échantillon 16-bit LE
-            out.push(data.get(idx).copied().unwrap_or(0));
+            let idx = row_start + i * 2;
+            let lo = data.get(idx).copied().unwrap_or(0) as u16;
+            let hi = data.get(idx + 1).copied().unwrap_or(0) as u16;
+            out.push((((hi << 8) | lo) >> shift).min(255) as u8);
         }
     }
     out

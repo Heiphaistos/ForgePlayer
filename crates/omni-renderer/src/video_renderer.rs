@@ -29,6 +29,9 @@ pub struct VideoRenderer {
     current_semi_planar: bool,
     /// Vrai si le flux courant est en plage complète (JPEG/PC).
     current_full_range: bool,
+    /// Facteur de remise à l'échelle des échantillons de la texture (le
+    /// 10-bit planaire de FFmpeg est aligné sur les bits bas).
+    current_sample_scale: f32,
     /// Vrai si le device a accordé `TEXTURE_FORMAT_16BIT_NORM` — sinon le
     /// contenu HDR 10-bit est affiché en 8-bit (repli silencieux, pas pire
     /// qu'avant cette fonctionnalité, jamais un crash).
@@ -79,7 +82,8 @@ impl ColorUniforms {
                 [0.0,     0.0,     0.0,     1.0],
             ],
             // offset.x = drapeau chroma semi-planaire, offset.y = offset de luma.
-            offset: [0.0, y_offset, 0.0, 0.0],
+            // offset.z = facteur d'échelle des échantillons (rempli plus bas).
+            offset: [0.0, y_offset, 1.0, 0.0],
         }
     }
 
@@ -89,6 +93,11 @@ impl ColorUniforms {
 
     fn with_semi(mut self, semi: bool) -> Self {
         self.offset[0] = if semi { 1.0 } else { 0.0 };
+        self
+    }
+
+    fn with_sample_scale(mut self, scale: f32) -> Self {
+        self.offset[2] = scale;
         self
     }
 }
@@ -207,6 +216,7 @@ impl VideoRenderer {
             current_color_space: 1,  // BT.709 par défaut
             current_semi_planar: false,
             current_full_range: false,
+            current_sample_scale: 1.0,
             supports_16bit: device.features().contains(Features::TEXTURE_FORMAT_16BIT_NORM),
         })
     }
@@ -227,15 +237,21 @@ impl VideoRenderer {
             2 => ColorUniforms::bt2020(full),
             _ => ColorUniforms::bt709(full),
         }
-        .with_semi(self.current_semi_planar);
+        .with_semi(self.current_semi_planar)
+        .with_sample_scale(self.current_sample_scale);
         queue.write_buffer(&self.uniform_buf, 0, bytemuck::bytes_of(&uniforms));
     }
 
     /// Met à jour les textures avec un nouveau frame.
     pub fn upload_frame(&mut self, device: &Device, queue: &Queue, frame: &DecodedVideoFrame) {
-        let semi = frame.format.is_semi_planar();
-        if semi != self.current_semi_planar {
-            self.current_semi_planar = semi;
+        let semi   = frame.format.is_semi_planar();
+        let bits16 = frame.format.is_hdr10bit() && self.supports_16bit;
+        // Sans textures 16 bits, l'upload retombe sur du 8-bit déjà normalisé :
+        // le facteur d'échelle ne s'applique alors plus.
+        let scale  = if bits16 { frame.format.sample_scale() } else { 1.0 };
+        if semi != self.current_semi_planar || scale != self.current_sample_scale {
+            self.current_semi_planar  = semi;
+            self.current_sample_scale = scale;
             self.write_uniforms(queue);
         }
 
@@ -244,7 +260,7 @@ impl VideoRenderer {
             device,
             frame.width,
             frame.height,
-            TexLayout { semi, bits16: frame.format.is_hdr10bit() && self.supports_16bit },
+            TexLayout { semi, bits16 },
         );
         textures.upload(queue, frame);
 

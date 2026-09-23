@@ -178,19 +178,17 @@ fn extract_planes(frame: &ffmpeg::util::frame::video::Video) -> (Vec<Vec<u8>>, V
             (vec![y, u, v], vec![y_stride, uv_stride, uv_stride], PixelFormat::Yuv420p)
         }
         ffmpeg::format::Pixel::YUV420P10LE => {
-            let (_w, h) = (frame.width() as usize, frame.height() as usize);
+            // Les échantillons restent tels que FFmpeg les produit : valeur
+            // 10 bits dans les bits BAS de chaque mot 16 bits. Aucune passe
+            // de décalage ici — le shader remet l'échelle (×65535/1023) d'un
+            // multiplication gratuite, là où ce décalage coûtait une relecture
+            // et une réallocation de tout le plan (24 Mo par image en 4K).
+            let h = frame.height() as usize;
             let y_stride  = frame.stride(0);
             let uv_stride = frame.stride(1);
-
-            // FFmpeg stocke le 10-bit dans les bits BAS de chaque mot 16-bit.
-            // On décale de 6 bits vers les bits HAUTS (convention P010) pour que
-            // la normalisation automatique R16Unorm du shader (valeur/65535)
-            // retombe exactement sur le même ratio noir/blanc/plage limitée
-            // qu'en 8-bit — aucun changement de shader nécessaire.
-            let y = shift_10_to_16(&frame.data(0)[..y_stride * h]);
-            let u = shift_10_to_16(&frame.data(1)[..uv_stride * (h / 2)]);
-            let v = shift_10_to_16(&frame.data(2)[..uv_stride * (h / 2)]);
-
+            let y = frame.data(0)[..y_stride * h].to_vec();
+            let u = frame.data(1)[..uv_stride * (h / 2)].to_vec();
+            let v = frame.data(2)[..uv_stride * (h / 2)].to_vec();
             (vec![y, u, v], vec![y_stride, uv_stride, uv_stride], PixelFormat::Yuv420p10le)
         }
         ffmpeg::format::Pixel::NV12 => {
@@ -240,16 +238,4 @@ fn download_hw_frame(
         anyhow::bail!("av_hwframe_transfer_data a échoué (code {ret})");
     }
     Ok(sw)
-}
-
-/// Décale chaque échantillon 16-bit little-endian de 6 bits vers la gauche :
-/// convertit la convention FFmpeg 10LE (valeur dans les bits bas) vers la
-/// convention P010 (valeur dans les bits hauts) attendue par le shader.
-fn shift_10_to_16(data: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(data.len());
-    for chunk in data.chunks_exact(2) {
-        let v = u16::from_le_bytes([chunk[0], chunk[1]]);
-        out.extend_from_slice(&(v << 6).to_le_bytes());
-    }
-    out
 }

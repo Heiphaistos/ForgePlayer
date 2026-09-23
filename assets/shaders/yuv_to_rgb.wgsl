@@ -34,7 +34,11 @@ struct ColorTransform {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let y_raw = textureSample(y_tex, samp, in.tex_coord).r;
+    // `color.offset.z` remet les échantillons à l'échelle : le 10-bit planaire
+    // de FFmpeg range sa valeur dans les bits BAS du mot 16 bits, la texture
+    // R16Unorm la normalise donc sur 65535 au lieu de 1023.
+    let scale = color.offset.z;
+    let y_raw = textureSample(y_tex, samp, in.tex_coord).r * scale;
 
     // Deux dispositions de chroma :
     //  - planaire (YUV420P / YUV420P10LE) : U et V dans deux textures R.
@@ -42,11 +46,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     //    U et V entrelacés dans une seule texture RG, liée aux deux slots.
     // `color.offset.x` porte le drapeau (uniforme, donc branche sûre pour
     // textureSample).
-    let uv_tex = textureSample(u_tex, samp, in.tex_coord);
+    let uv_tex = textureSample(u_tex, samp, in.tex_coord) * scale;
     var u_raw = uv_tex.r;
     var v_raw = uv_tex.g;
     if (color.offset.x < 0.5) {
-        v_raw = textureSample(v_tex, samp, in.tex_coord).r;
+        v_raw = textureSample(v_tex, samp, in.tex_coord).r * scale;
     }
 
     // `color.offset.y` porte l'offset de luma : 16/255 en plage limitée
