@@ -237,6 +237,12 @@ Format par entrée : `[STATUT] Zone — description`. STATUT ∈ {FIXED, OPEN, T
 - **Mesure** : quantiles de luminance (p5/p25/p50/p75/p95) du PNG enregistré **0,132 / 0,250 / 0,538 / 0,853 / 1,000** contre **0,134 / 0,250 / 0,528 / 0,853 / 1,000** pour la fenêtre affichée — écart maximal 0,010, dû au ré-échantillonnage de la fenêtre (1238 px) vers la source (3840 px).
 - ⚠ `pilote.py` n'envoie que des touches simples : le raccourci `Maj+S` n'est pas testable par ce canal, le test passe par le clic sur l'entrée de menu (qui appelle le même code).
 
+### Reprise de lecture (2026-09-23, itération 15 de la boucle)
+
+- [NOUVEAU] **Reprise là où on s'est arrêté**, comme VLC et mpv. La position est enregistrée dans la config (50 fichiers au maximum) à la fermeture propre et au changement de média, puis appliquée à la réouverture avec un OSD « Reprise à m:ss ». Réglage `resume_playback` (activé par défaut, case à cocher dans Paramètres).
+- Les positions proches du début ou de la fin (moins de 30 s de chaque côté) ne sont pas mémorisées : reprendre à 3 s ou dans le générique n'a aucun intérêt.
+- **Mesure** : lecture de `long_hdr_4k.mp4`, cinq sauts en avant, fermeture propre → `config.json` contient `("D:\Projet\ForgePlayer\.testmedia\long_hdr_4k.mp4", 55.755…)`. Réouverture : journal `reprise de lecture à 55.8 s`, et la barre affiche **1:15 / 5:30** quelques secondes plus tard (capture à l'appui) au lieu de repartir de zéro.
+
 ### Reste à faire
 
 - [ ] Utiliser les métadonnées de mastering réelles (MaxCLL / master-display) comme pic de tone mapping, au lieu de la valeur figée `max_luminance` de la config.

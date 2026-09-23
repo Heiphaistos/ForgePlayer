@@ -49,6 +49,10 @@ pub struct ForgeApp {
     /// texture et rectangle source de chaque image).
     sub_bitmap_textures: Vec<(egui::TextureHandle, egui::Rect)>,
     sub_bitmap_id:       Option<u64>,
+    /// Chemin du média en cours, pour mémoriser sa position de lecture.
+    current_media_path: Option<String>,
+    /// La reprise a déjà été appliquée pour ce fichier.
+    resume_applied:     bool,
     /// Capture d'image en cours : demande et résultat partagés avec le rendu.
     snapshot:            crate::video_callback::SharedSnapshot,
     image_path_loaded: String,
@@ -122,6 +126,8 @@ impl ForgeApp {
             sub_bitmap_textures: Vec::new(),
             sub_bitmap_id: None,
             snapshot: Default::default(),
+            current_media_path: None,
+            resume_applied: false,
             image_path_loaded: String::new(),
             pending_video_frame: None,
             video_color_space: 1,
@@ -197,6 +203,10 @@ impl ForgeApp {
         // « Ouvrir avec » et certains navigateurs passent une URL file://.
         let path = Self::local_path_from_url(&path);
         log::info!("ouverture: {path}");
+        // Mémorise où on en était dans le média précédent avant de le quitter.
+        self.remember_position();
+        self.current_media_path = Some(path.clone());
+        self.resume_applied = false;
         *self.video_frame.lock() = None;
         self.video_transfer = 0;
         self.video_full_range = false;
@@ -390,6 +400,15 @@ impl ForgeApp {
     /// Demande une capture de l'image affichée. Le rendu ayant lieu sur le GPU,
     /// c'est le callback de peinture qui la relit à la frame suivante ;
     /// `collect_snapshot` écrit ensuite le fichier.
+    /// Enregistre la position courante du média en cours dans la config.
+    fn remember_position(&mut self) {
+        let (Some(path), true) = (self.current_media_path.clone(), self.player.duration > 0.0)
+            else { return };
+        let pos = self.player.position;
+        let dur = self.player.duration;
+        self.config.remember_position(&path, pos, dur);
+    }
+
     fn request_snapshot(&mut self) {
         if self.player.is_image_mode() || self.player.media_info.is_none() {
             return;
@@ -782,6 +801,18 @@ impl eframe::App for ForgeApp {
             // hautes lumières, un master 600 nits en laisse passer trop.
             self.video_peak_nits = info.video.as_ref().and_then(|v| v.peak_nits);
             self.video_full_range = info.video.as_ref().map(|v| v.full_range).unwrap_or(false);
+            if self.config.resume_playback && !self.resume_applied && self.player.duration > 0.0 {
+                self.resume_applied = true;
+                if let Some(pos) = self.current_media_path.as_ref()
+                    .and_then(|p| self.config.resume_position(p))
+                {
+                    if pos < self.player.duration - 5.0 {
+                        self.player.seek(pos);
+                        self.set_osd(format!("Reprise à {}:{:02}", (pos as u64) / 60, (pos as u64) % 60));
+                        log::info!("reprise de lecture à {pos:.1} s");
+                    }
+                }
+            }
             if self.config.subtitle_auto {
                 let lang = self.config.subtitle_lang.clone();
                 self.player.auto_select_subtitle(&lang);
@@ -980,6 +1011,7 @@ impl eframe::App for ForgeApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.remember_position();
         self.player.stop();
         // Persiste volume et vitesse de lecture pour la prochaine session
         self.config.volume = self.player.volume;

@@ -48,6 +48,12 @@ pub struct AppConfig {
     /// ni VLC ni mpv.
     #[serde(default = "default_true")]
     pub subtitle_auto:       bool,
+    /// Reprend la lecture là où elle avait été laissée, comme VLC et mpv.
+    #[serde(default = "default_true")]
+    pub resume_playback:     bool,
+    /// Positions mémorisées : (chemin, secondes). Les 50 dernières.
+    #[serde(default)]
+    pub resume_positions:    Vec<(String, f64)>,
     pub tonemap_mode:        u32,
     pub max_luminance:       f32,
     pub subtitle_service_port: u16,
@@ -73,6 +79,8 @@ impl Default for AppConfig {
             hw_accel:              "auto".into(),
             subtitle_lang:         "fr".into(),
             subtitle_auto:         true,
+            resume_playback:       true,
+            resume_positions:      Vec::new(),
             tonemap_mode:          0,
             max_luminance:         1000.0,
             subtitle_service_port: 18080,
@@ -110,6 +118,23 @@ impl AppConfig {
         if let Ok(json) = serde_json::to_string_pretty(self) {
             let _ = std::fs::write(path, json);
         }
+    }
+
+    /// Mémorise où la lecture d'un fichier s'est arrêtée. Une position proche
+    /// du début ou de la fin est oubliée : reprendre à 3 s ou à 10 s du
+    /// générique n'a pas d'intérêt et surprendrait plus qu'autre chose.
+    pub fn remember_position(&mut self, file: &str, position: f64, duration: f64) {
+        self.resume_positions.retain(|(f, _)| f != file);
+        if position > 30.0 && duration > 0.0 && position < duration - 30.0 {
+            self.resume_positions.insert(0, (file.to_string(), position));
+            self.resume_positions.truncate(50);
+        }
+    }
+
+    pub fn resume_position(&self, file: &str) -> Option<f64> {
+        self.resume_positions.iter()
+            .find(|(f, _)| f == file)
+            .map(|(_, p)| *p)
     }
 
     pub fn add_recent(&mut self, file: &str) {
