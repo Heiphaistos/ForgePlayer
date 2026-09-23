@@ -31,6 +31,10 @@ pub struct HdrOffscreen {
     view: Option<wgpu::TextureView>,
     w:    u32,
     h:    u32,
+    /// Vrai tant que la texture n'a pas été redessinée depuis sa création :
+    /// une texture fraîchement allouée est vide, l'afficher donnerait un écran
+    /// noir jusqu'à l'image suivante.
+    needs_redraw: bool,
 }
 
 impl HdrOffscreen {
@@ -49,9 +53,13 @@ impl HdrOffscreen {
             self.view = Some(tex.create_view(&Default::default()));
             self.w = w;
             self.h = h;
+            self.needs_redraw = true;
         }
         self.view.as_ref().unwrap()
     }
+
+    fn needs_redraw(&self) -> bool { self.needs_redraw }
+    fn mark_drawn(&mut self) { self.needs_redraw = false; }
 }
 
 /// Callback egui_wgpu : upload la dernière frame YUV vers le GPU et encode le rendu.
@@ -185,10 +193,12 @@ impl egui_wgpu::CallbackTrait for VideoPaintCallback {
         enc:    &mut wgpu::CommandEncoder,
         resources: &mut egui_wgpu::CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
+        let mut new_frame = false;
         if let Some(renderer) = resources.get_mut::<VideoRenderer>() {
             renderer.set_color_space(queue, self.color_space, self.full_range);
             if let Some(frame) = self.frame.lock().take() {
                 renderer.upload_frame(device, queue, &frame);
+                new_frame = true;
             }
         }
 
@@ -207,8 +217,22 @@ impl egui_wgpu::CallbackTrait for VideoPaintCallback {
                     .map(|off| off.ensure(device, w, h).clone());
 
                 if let Some(view) = view {
-                    if let Some(renderer) = resources.get::<VideoRenderer>() {
-                        renderer.render_to_offscreen(enc, &view);
+                    // Cette passe ombre TOUTE la résolution source (8,3 Mpx en
+                    // 4K). L'interface se redessine à ~70 Hz alors que le film
+                    // fait 24 images par seconde : la refaire à chaque
+                    // redessin, c'est trois fois le travail pour un résultat
+                    // identique. On ne la rejoue qu'à l'arrivée d'une image, ou
+                    // quand la texture hors écran vient d'être (ré)allouée.
+                    let stale = resources.get::<HdrOffscreen>()
+                        .map(|off| off.needs_redraw())
+                        .unwrap_or(true);
+                    if new_frame || stale {
+                        if let Some(renderer) = resources.get::<VideoRenderer>() {
+                            renderer.render_to_offscreen(enc, &view);
+                        }
+                        if let Some(off) = resources.get_mut::<HdrOffscreen>() {
+                            off.mark_drawn();
+                        }
                     }
                     if let Some(tonemapper) = resources.get_mut::<HdrTonemapper>() {
                         tonemapper.set_input_texture(device, &view);

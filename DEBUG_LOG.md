@@ -286,6 +286,12 @@ Format par entrée : `[STATUT] Zone — description`. STATUT ∈ {FIXED, OPEN, T
 - **Limite restante, chiffrée** : les 15,4 ms qui restent sont la copie GPU→RAM elle-même, inhérente au mode « décodage matériel puis rapatriement ». VLC ne la paie pas : il garde la surface sur le GPU (zéro-copie D3D11). C'est le seul écart de performance encore ouvert, et le chemin pour le fermer est l'interopérabilité D3D11 ↔ wgpu, qui suppose de forcer le backend DX12 (l'application tourne actuellement sur Vulkan) et de passer par `wgpu_hal`.
 - Compatibilité vérifiée au passage, sans anomalie : **VFR** (cadence variable), **ProRes 422 10 bits**, audio **44,1 kHz** (pas de dérive : `pos` suit `wall`), fichier 1918×1078.
 
+### Passe 4K rejouée à chaque redessin (2026-09-23, itération 22 de la boucle)
+
+- [FIXED] En HDR, la passe YUV→RGB ombre **toute la résolution source** (8,3 Mpx en 4K) vers une texture hors écran. Elle était rejouée à **chaque redessin de l'interface** (~70 Hz) alors que le film n'a que 24 images par seconde : trois fois le travail pour un résultat identique. Elle n'est désormais rejouée qu'à l'arrivée d'une image, ou quand la texture hors écran vient d'être (ré)allouée — sans quoi la première image serait noire.
+- **Mesure sur le même fichier 4K HDR** : **59 % → 50 % d'un cœur** (19,9 s de processeur pour 40 s de lecture). Cumulé avec l'itération précédente : **80 % → 50 %**.
+- Vérifié qu'aucune fluidité n'est perdue : 960 paquets, 960 images décodées, **0 perdue**, `pos == wall` à ±10 ms, image correcte à la capture.
+
 ### Reste à faire
 
 - [ ] Utiliser les métadonnées de mastering réelles (MaxCLL / master-display) comme pic de tone mapping, au lieu de la valeur figée `max_luminance` de la config.
