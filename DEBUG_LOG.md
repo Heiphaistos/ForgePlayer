@@ -196,6 +196,14 @@ Format par entrée : `[STATUT] Zone — description`. STATUT ∈ {FIXED, OPEN, T
 - `RELEASE_NOTES.md` : section v1.6.0 complète (corrections HDR, corrections 4K/2K, vérifications chiffrées).
 - **Preuve d'exécution** : le binaire construit journalise `ForgePlayer v1.6.0` au démarrage et lit un fichier sans erreur.
 
+### Packaging et publication v1.6.0 (2026-09-23, itération 10 de la boucle)
+
+- `build.bat release x64` : exécutable Rust + les deux services Go + DLL FFmpeg + shaders assemblés dans `dist\`.
+- Binaires signés avec le certificat Heiphaistos (`D:\Projet\outils\signer\signer.ps1`) : `ForgePlayer.exe`, `subtitle-service.exe`, `media-indexer.exe`, puis l'installateur. `Get-AuthenticodeSignature` rend `UnknownError` sur cette machine — normal, la racine auto-signée n'y est pas installée ; le signataire lu est bien `CN=Heiphaistos`.
+- `ForgePlayer_v1.6.0_Portable.zip` (99 Mo) et `ForgePlayer_v1.6.0_Setup.exe` (67 Mo, Inno Setup) produits ; anciens artefacts 1.5.0 supprimés de `dist\`.
+- **Test du binaire packagé** (pas du build de développement) : `dist\ForgePlayer.exe` journalise `ForgePlayer v1.6.0`, détecte `HDR: transfert=1`, affiche l'image correctement (capture à l'appui).
+- Poussé sur GitHub : 9 commits (`ab32ded..4b2fa81`) et release **v1.6.0** publiée avec les deux artefacts — https://github.com/Heiphaistos/ForgePlayer/releases/tag/v1.6.0
+
 ### Reste à faire
 
 - [ ] Utiliser les métadonnées de mastering réelles (MaxCLL / master-display) comme pic de tone mapping, au lieu de la valeur figée `max_luminance` de la config.
