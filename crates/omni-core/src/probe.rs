@@ -24,6 +24,10 @@ pub struct VideoStreamInfo {
     pub fps:        f64,
     pub bit_rate:   i64,
     pub hdr:        bool,
+    /// Pic de luminance réel du contenu en nits, lu dans les métadonnées HDR10
+    /// du flux (MaxCLL, sinon la luminance max de l'écran de mastering).
+    /// `None` = aucune métadonnée, l'appelant retombe sur sa valeur de config.
+    pub peak_nits:  Option<f32>,
     /// Fonction de transfert : 0 = SDR, 1 = PQ (SMPTE ST.2084), 2 = HLG.
     /// C'est elle, et non la profondeur de bits, qui détermine si le rendu
     /// doit passer par le tone mapping — un flux 10-bit BT.709 reste du SDR.
@@ -61,7 +65,7 @@ pub fn probe_file(path: &Path) -> Result<MediaInfo> {
     ffmpeg::init().context("ffmpeg init")?;
 
     let path_str = path.to_string_lossy().to_string();
-    let ctx = ffmpeg::format::input(&path)
+    let mut ctx = ffmpeg::format::input(&path)
         .with_context(|| format!("ouverture de {path_str}"))?;
 
     let format_name = ctx.format().name().to_string();
@@ -100,6 +104,7 @@ pub fn probe_file(path: &Path) -> Result<MediaInfo> {
                         _ => 0u8,
                     };
                     let hdr = transfer != 0;
+                    let peak_nits = unsafe { hdr_peak_nits(stream.parameters().as_ptr()) };
 
                     video_info = Some(VideoStreamInfo {
                         index:      stream.index(),
@@ -109,6 +114,7 @@ pub fn probe_file(path: &Path) -> Result<MediaInfo> {
                         fps:        fps_f,
                         bit_rate:   dec.bit_rate() as i64,
                         hdr,
+                        peak_nits,
                         transfer,
                         color_space,
                     });
@@ -147,6 +153,21 @@ pub fn probe_file(path: &Path) -> Result<MediaInfo> {
         }
     }
 
+    // Le pic HDR10 peut n'exister que dans les SEI du flux (cas d'un encodage
+    // x265 `hdr10=1` sans boîtes mdcv/clli au niveau du conteneur) : il
+    // n'apparaît alors PAS dans `codecpar`, seulement sur les frames décodées.
+    // On décode donc la première image quand le conteneur n'a rien annoncé.
+    if let Some(v) = video_info.as_mut() {
+        if v.hdr && v.peak_nits.is_none() {
+            v.peak_nits = first_frame_peak_nits(&mut ctx, v.index);
+        }
+        match v.peak_nits {
+            Some(p) => log::info!("HDR: transfert={} (1=PQ, 2=HLG), pic annoncé par le fichier = {p:.0} nits", v.transfer),
+            None if v.hdr => log::info!("HDR: transfert={} (1=PQ, 2=HLG), aucune métadonnée de pic, repli sur les réglages", v.transfer),
+            None => {}
+        }
+    }
+
     let chapters = ctx
         .chapters()
         .map(|ch| Chapter {
@@ -168,4 +189,121 @@ pub fn probe_file(path: &Path) -> Result<MediaInfo> {
         format_name,
         bit_rate,
     })
+}
+
+/// Métadonnées HDR10 transportées en side data du flux. `libavutil` les publie
+/// dans `mastering_display_metadata.h`, que `ffmpeg-sys-next` ne binde pas —
+/// les deux structures sont donc redéclarées ici, à l'identique de l'en-tête.
+/// Seuls les champs lus ci-dessous comptent, d'éventuels champs ajoutés en fin
+/// de structure par une version ultérieure de FFmpeg ne changeraient pas leur
+/// position.
+#[repr(C)]
+struct AvMasteringDisplayMetadata {
+    display_primaries: [[ffmpeg::ffi::AVRational; 2]; 3],
+    white_point:       [ffmpeg::ffi::AVRational; 2],
+    min_luminance:     ffmpeg::ffi::AVRational,
+    max_luminance:     ffmpeg::ffi::AVRational,
+    has_primaries:     std::os::raw::c_int,
+    has_luminance:     std::os::raw::c_int,
+}
+
+#[repr(C)]
+struct AvContentLightMetadata {
+    max_cll:  std::os::raw::c_uint,
+    max_fall: std::os::raw::c_uint,
+}
+
+/// Pic de luminance du contenu, en nits : MaxCLL s'il est présent (c'est le
+/// pic RÉEL de l'image, mesuré à l'encodage), sinon la luminance max de
+/// l'écran de mastering (le pic que le coloriste voyait). Tone mapper sur une
+/// valeur figée alors que le fichier annonce la sienne écrase inutilement les
+/// hautes lumières d'un master 4000 nits, ou en laisse passer trop sur un
+/// master 600 nits.
+unsafe fn hdr_peak_nits(par: *const ffmpeg::ffi::AVCodecParameters) -> Option<f32> {
+    if par.is_null() { return None; }
+    let list = (*par).coded_side_data;
+    let count = (*par).nb_coded_side_data;
+    if list.is_null() || count <= 0 { return None; }
+
+    let mut from_cll: Option<f32> = None;
+    let mut from_master: Option<f32> = None;
+
+    for i in 0..count as usize {
+        let entry = &*list.add(i);
+        match entry.type_ {
+            ffmpeg::ffi::AVPacketSideDataType::AV_PKT_DATA_CONTENT_LIGHT_LEVEL => {
+                if entry.size >= std::mem::size_of::<AvContentLightMetadata>() {
+                    let m = &*(entry.data as *const AvContentLightMetadata);
+                    if m.max_cll > 0 { from_cll = Some(m.max_cll as f32); }
+                }
+            }
+            ffmpeg::ffi::AVPacketSideDataType::AV_PKT_DATA_MASTERING_DISPLAY_METADATA => {
+                if entry.size >= std::mem::size_of::<AvMasteringDisplayMetadata>() {
+                    let m = &*(entry.data as *const AvMasteringDisplayMetadata);
+                    if m.has_luminance != 0 && m.max_luminance.den != 0 {
+                        from_master = Some(m.max_luminance.num as f32 / m.max_luminance.den as f32);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    from_cll.or(from_master).and_then(sane_peak)
+}
+
+/// Décode la première image de la piste vidéo pour y lire les métadonnées HDR10
+/// portées par les SEI. Borné à 60 paquets : un fichier dont la première image
+/// n'arrive pas dans ce budget n'a de toute façon pas de métadonnée exploitable
+/// à ce stade, et la sonde ne doit jamais retarder l'ouverture.
+fn first_frame_peak_nits(
+    ctx:       &mut ffmpeg::format::context::Input,
+    video_idx: usize,
+) -> Option<f32> {
+    let params = ctx.stream(video_idx)?.parameters();
+    let mut decoder = ffmpeg::codec::context::Context::from_parameters(params)
+        .ok()?
+        .decoder()
+        .video()
+        .ok()?;
+
+    let mut frame = ffmpeg::util::frame::video::Video::empty();
+    let mut budget = 60;
+    for (stream, packet) in ctx.packets() {
+        if stream.index() != video_idx { continue; }
+        budget -= 1;
+        if budget <= 0 { break; }
+        if decoder.send_packet(&packet).is_err() { continue; }
+        if decoder.receive_frame(&mut frame).is_ok() {
+            return unsafe { frame_peak_nits(&frame) };
+        }
+    }
+    None
+}
+
+/// Même logique que `hdr_peak_nits`, mais sur les side data d'une frame
+/// décodée (SEI du flux) au lieu de celles du conteneur.
+unsafe fn frame_peak_nits(frame: &ffmpeg::util::frame::video::Video) -> Option<f32> {
+    use ffmpeg::ffi::AVFrameSideDataType::*;
+
+    let cll = ffmpeg::ffi::av_frame_get_side_data(frame.as_ptr(), AV_FRAME_DATA_CONTENT_LIGHT_LEVEL);
+    if !cll.is_null() && (*cll).size >= std::mem::size_of::<AvContentLightMetadata>() {
+        let m = &*((*cll).data as *const AvContentLightMetadata);
+        if m.max_cll > 0 { return sane_peak(m.max_cll as f32); }
+    }
+
+    let mdm = ffmpeg::ffi::av_frame_get_side_data(frame.as_ptr(), AV_FRAME_DATA_MASTERING_DISPLAY_METADATA);
+    if !mdm.is_null() && (*mdm).size >= std::mem::size_of::<AvMasteringDisplayMetadata>() {
+        let m = &*((*mdm).data as *const AvMasteringDisplayMetadata);
+        if m.has_luminance != 0 && m.max_luminance.den != 0 {
+            return sane_peak(m.max_luminance.num as f32 / m.max_luminance.den as f32);
+        }
+    }
+    None
+}
+
+/// Un pic hors de cette plage est une métadonnée cassée : on l'ignore plutôt
+/// que de tone mapper n'importe comment.
+fn sane_peak(v: f32) -> Option<f32> {
+    (v.is_finite() && (100.0..=10000.0).contains(&v)).then_some(v)
 }

@@ -36,6 +36,8 @@ pub struct ForgeApp {
     /// bits — un flux 10-bit BT.709 est du SDR et ne doit PAS passer par le
     /// tone mapping (sinon l'image ressort brûlée).
     video_transfer:    u32,
+    /// Pic de luminance annoncé par le fichier (nits), s'il en annonce un.
+    video_peak_nits:   Option<f32>,
     osd:               Option<Osd>,
     #[allow(dead_code)] services: Option<ServicesClient>,
     last_mouse_move:   f64,
@@ -95,6 +97,7 @@ impl ForgeApp {
             playlist_items: Vec::new(), playlist_idx: None, seek_request: None,
             video_frame: Arc::new(Mutex::new(None)),
             video_transfer: 0,
+            video_peak_nits: None,
             osd: initial_osd, services,
             last_mouse_move: 0.0,
             image_viewer: ImageViewer::default(),
@@ -154,6 +157,7 @@ impl ForgeApp {
         log::info!("ouverture: {path}");
         *self.video_frame.lock() = None;
         self.video_transfer = 0;
+        self.video_peak_nits = None;
         self.pending_video_frame = None;
         self.config.add_recent(&path);
         // Reset image viewer pour nouvelle image
@@ -652,6 +656,11 @@ impl eframe::App for ForgeApp {
             let cs = Self::detect_color_space(info);
             self.video_color_space = cs;
             self.video_transfer = info.video.as_ref().map(|v| v.transfer as u32).unwrap_or(0);
+            // Pic de tone mapping : celui annoncé par le fichier (MaxCLL ou
+            // écran de mastering) plutôt que la valeur figée des réglages —
+            // un master 4000 nits tone mappé comme du 1000 nits écrase ses
+            // hautes lumières, un master 600 nits en laisse passer trop.
+            self.video_peak_nits = info.video.as_ref().and_then(|v| v.peak_nits);
         }
 
         // Titre fenêtre dynamique
@@ -764,7 +773,7 @@ impl eframe::App for ForgeApp {
                     self.video_color_space,
                     self.video_transfer,
                     self.config.tonemap_mode,
-                    self.config.max_luminance,
+                    self.video_peak_nits.unwrap_or(self.config.max_luminance),
                 );
             });
         if toggle_fs {

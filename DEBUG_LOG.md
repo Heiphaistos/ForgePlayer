@@ -135,6 +135,14 @@ Format par entrée : `[STATUT] Zone — description`. STATUT ∈ {FIXED, OPEN, T
 - Modes ACES / Hable / Neutre restent disponibles dans Paramètres (désormais eux aussi luminance-only).
 - Méthode réutilisable : plan fixe de 5 s (`still_hdr_5s.mp4`), capture des deux fenêtres par `pilote.py`, dé-gamma sRGB puis comparaison des quantiles — insensible au décalage de cadrage entre les deux lecteurs.
 
+### Pic de tone mapping lu dans le fichier (2026-09-23, itération 3 de la boucle)
+
+- [FIXED] **Le pic de tone mapping était une constante de configuration** (1000 nits) quelle que soit la source. Un master 4000 nits se faisait écraser les hautes lumières, un master 600 nits en gardait trop. Le pic vient maintenant du fichier : **MaxCLL** s'il est présent (pic réel mesuré à l'encodage), sinon la **luminance max de l'écran de mastering**, sinon repli sur le réglage.
+- **Piège** : les métadonnées HDR10 d'un encodage x265 `hdr10=1` ne sont PAS dans `codecpar` (aucune boîte `mdcv`/`clli` au niveau du conteneur), seulement dans les SEI du flux. Lire `AVCodecParameters::coded_side_data` ne suffit donc pas — la sonde décode aussi la première image (budget borné à 60 paquets) et lit `av_frame_get_side_data`. Les deux chemins sont couverts.
+- **Piège** : `ffmpeg-sys-next` ne binde pas `libavutil/mastering_display_metadata.h` — `AVMasteringDisplayMetadata` et `AVContentLightMetadata` sont redéclarées en `#[repr(C)]` dans `probe.rs`. Valeurs hors de 100..10000 nits ignorées (métadonnée cassée).
+- **Mesure** : deux rampes PQ identiques encodées avec `max-cll=1000` et `max-cll=4000`. Journal : « pic annoncé par le fichier = 1000 nits » puis « = 4000 nits ». Rendu : hautes lumières tenues 0,038 plus bas en 4000 nits (x=1,0 : 0,888 → 0,850 ; x=0,8 : 0,762 → 0,734), tons moyens quasi inchangés (−0,006 à mi-course) — exactement le comportement attendu d'un pic plus élevé.
+- Un fichier SDR n'émet aucune ligne HDR (vérifié sur `sdr10_4k.mp4`).
+
 ### Reste à faire
 
 - [ ] Utiliser les métadonnées de mastering réelles (MaxCLL / master-display) comme pic de tone mapping, au lieu de la valeur figée `max_luminance` de la config.
