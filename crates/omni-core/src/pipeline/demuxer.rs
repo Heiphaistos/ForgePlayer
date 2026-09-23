@@ -133,7 +133,8 @@ pub fn run_demuxer(
     // sont lus qu'une seule fois (en avance sur la lecture) — une activation tardive
     // de la piste doit retrouver les cues déjà passés. Le player filtre par piste.
     // (stream_idx, ordinal piste, décodeur, time_base)
-    let mut sub_decs: Vec<(usize, usize, ffmpeg::codec::decoder::Subtitle, f64)> = Vec::new();
+    // (stream_idx, ordinal, décodeur, time_base, piste bitmap déjà vue)
+    let mut sub_decs: Vec<(usize, usize, ffmpeg::codec::decoder::Subtitle, f64, bool)> = Vec::new();
     for (ord, &si) in all_sub_idx.iter().enumerate() {
         if let Some(st) = ctx.format_ctx.stream(si) {
             let tb = st.time_base().numerator() as f64
@@ -142,7 +143,7 @@ pub fn run_demuxer(
                 .ok()
                 .and_then(|cc| cc.decoder().subtitle().ok())
             {
-                Some(dec) => sub_decs.push((si, ord, dec, tb)),
+                Some(dec) => sub_decs.push((si, ord, dec, tb, false)),
                 None => log::warn!("piste sous-titre {si}: codec non supporté (bitmap PGS/VOBSUB ?)"),
             }
         }
@@ -372,13 +373,18 @@ pub fn run_demuxer(
                     );
                 }
             }
-        } else if let Some((_, ord, dec, tb)) = sub_decs.iter_mut()
-            .find(|(si, _, _, _)| *si == stream_idx)
+        } else if let Some((_, ord, dec, tb, is_bitmap)) = sub_decs.iter_mut()
+            .find(|(si, _, _, _, _)| *si == stream_idx)
         {
             // Décode les paquets sous-titres de toutes les pistes texte
             let pts_start = packet.pts().unwrap_or(0).max(0) as f64 * *tb;
             let duration_secs = packet.duration() as f64 * *tb;
-            let pts_end = pts_start + duration_secs.max(1.0);
+            // Un paquet PGS n'a pas de durée : l'image reste affichée jusqu'au
+            // paquet d'effacement (une composition sans rectangle). Lui donner
+            // une seconde par défaut, comme pour du texte, la ferait disparaître
+            // presque aussitôt — on prend une fin large que l'effacement borne.
+            let default_secs = if *is_bitmap { 30.0 } else { 1.0 };
+            let pts_end = pts_start + if duration_secs > 0.0 { duration_secs } else { default_secs };
 
             let mut subtitle = ffmpeg::Subtitle::new();
             if dec.decode(&packet, &mut subtitle) == Ok(true) {
@@ -386,6 +392,16 @@ pub fn run_demuxer(
                 if !text.is_empty() {
                     let _ = event_tx.try_send(
                         PipelineEvent::SubtitleLine(*ord, text, pts_start, pts_end)
+                    );
+                }
+                // PGS/VOBSUB/DVB : pas de texte, des images à incruster.
+                let bitmaps = collect_subtitle_bitmaps(&subtitle);
+                if !bitmaps.is_empty() { *is_bitmap = true; }
+                // Les compositions vides sont envoyées AUSSI (uniquement pour une
+                // piste bitmap) : ce sont elles qui effacent l'image précédente.
+                if !bitmaps.is_empty() || *is_bitmap {
+                    let _ = event_tx.try_send(
+                        PipelineEvent::SubtitleBitmap(*ord, bitmaps, pts_start, pts_end)
                     );
                 }
             }
@@ -477,4 +493,56 @@ fn flush_audio_decoder(
             let _ = audio_tx.send_timeout(f, std::time::Duration::from_millis(200));
         }
     }
+}
+
+/// Convertit les rectangles bitmap d'un sous-titre (PGS/HDMV, VOBSUB, DVB) en
+/// images RGBA. Le décodeur FFmpeg rend ces formats en PAL8 : `data[0]` contient
+/// un index par pixel et `data[1]` la palette, 256 entrées ARGB rangées en
+/// `u32` natifs — d'où la lecture octet par octet ci-dessous.
+fn collect_subtitle_bitmaps(
+    subtitle: &ffmpeg::Subtitle,
+) -> Vec<crate::decoder::subtitle::SubtitleBitmap> {
+    use ffmpeg::subtitle::Rect;
+    let mut out = Vec::new();
+
+    for rect in subtitle.rects() {
+        let Rect::Bitmap(bmp) = rect else { continue };
+        let (w, h) = (bmp.width() as usize, bmp.height() as usize);
+        if w == 0 || h == 0 { continue; }
+
+        let (indices, palette, stride) = unsafe {
+            let r = &*bmp.as_ptr();
+            (r.data[0], r.data[1], r.linesize[0] as usize)
+        };
+        if indices.is_null() || palette.is_null() || stride == 0 { continue; }
+
+        let colors = bmp.colors().min(256);
+        let mut lut = [[0u8; 4]; 256];
+        for (i, entry) in lut.iter_mut().enumerate().take(colors) {
+            let v = unsafe { *(palette as *const u32).add(i) };
+            *entry = [
+                ((v >> 16) & 0xFF) as u8, // R
+                ((v >> 8) & 0xFF) as u8,  // V
+                (v & 0xFF) as u8,         // B
+                ((v >> 24) & 0xFF) as u8, // A
+            ];
+        }
+
+        let mut rgba = Vec::with_capacity(w * h * 4);
+        for row in 0..h {
+            let line = unsafe { std::slice::from_raw_parts(indices.add(row * stride), w) };
+            for &idx in line {
+                rgba.extend_from_slice(&lut[idx as usize]);
+            }
+        }
+
+        out.push(crate::decoder::subtitle::SubtitleBitmap {
+            x: bmp.x() as u32,
+            y: bmp.y() as u32,
+            width:  w as u32,
+            height: h as u32,
+            rgba,
+        });
+    }
+    out
 }

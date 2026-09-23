@@ -35,6 +35,10 @@ pub enum PipelineEvent {
     /// Ligne de sous-titre intégrée (ordinal piste, texte, pts_start, pts_end en secondes).
     /// Toutes les pistes texte sont décodées ; le player filtre par piste active.
     SubtitleLine(usize, String, f64, f64),
+    /// Images de sous-titre (PGS/VOBSUB/DVB) : ordinal de piste, rectangles
+    /// RGBA, pts_start, pts_end en secondes. Un cue peut contenir plusieurs
+    /// rectangles (texte principal + incrustation).
+    SubtitleBitmap(usize, Vec<crate::decoder::subtitle::SubtitleBitmap>, f64, f64),
 }
 
 /// Capacité max des queues de frames (frames buffered).

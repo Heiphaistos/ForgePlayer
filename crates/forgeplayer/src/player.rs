@@ -1,5 +1,5 @@
 use anyhow::{Context as _, Result};
-use omni_core::decoder::subtitle::SubtitleTrack;
+use omni_core::decoder::subtitle::{SubtitleBitmap, SubtitleTrack};
 use omni_core::decoder::DecodedVideoFrame;
 use omni_core::pipeline::clock::MasterClock;
 use omni_core::pipeline::{MediaPipeline, PipelineCommand, PipelineEvent};
@@ -34,6 +34,10 @@ pub struct Player {
     pub media_info:       Option<MediaInfo>,
     pub subtitle_track:   Option<SubtitleTrack>,
     pub current_subtitle: Option<String>,
+    /// Cue de sous-titre bitmap (PGS/VOBSUB/DVB) affiché à la position
+    /// courante, avec un identifiant incrémental : l'UI ne reconstruit ses
+    /// textures que quand l'identifiant change.
+    pub current_bitmaps: Option<(u64, std::sync::Arc<Vec<SubtitleBitmap>>)>,
     pub chapters:         Vec<Chapter>,
     pub audio_track_idx:  usize,
     pub sub_track_idx:    Option<usize>,
@@ -42,6 +46,9 @@ pub struct Player {
     /// Sous-titres intégrés décodés en avance : (piste, texte, pts_start, pts_end).
     /// Toutes les pistes sont conservées — le filtrage se fait à l'affichage.
     embedded_events:      Vec<(usize, String, f64, f64)>,
+    /// Cues bitmap décodés d'avance : (piste, identifiant, images, début, fin).
+    embedded_bitmaps:     Vec<(usize, u64, std::sync::Arc<Vec<SubtitleBitmap>>, f64, f64)>,
+    next_bitmap_id:       u64,
     /// Signale à l'app que le moteur audio doit être purgé (seek / nouveau fichier).
     pub audio_flush_needed: bool,
     /// true = l'horloge est pilotée par la position audio réellement jouée
@@ -74,12 +81,15 @@ impl Player {
             media_info:       None,
             subtitle_track:   None,
             current_subtitle: None,
+            current_bitmaps: None,
             chapters:         Vec::new(),
             audio_track_idx:  0,
             sub_track_idx:    None,
             clock:            MasterClock::new(),
             image_frame:      None,
             embedded_events:  Vec::new(),
+            embedded_bitmaps: Vec::new(),
+            next_bitmap_id:   0,
             audio_flush_needed: false,
             clock_audio_master: false,
             hw_accel_pref:    "auto".into(),
@@ -355,6 +365,30 @@ impl Player {
                     self.chapters   = info.chapters.clone();
                     self.media_info = Some(*info);
                 }
+                PipelineEvent::SubtitleBitmap(track, bitmaps, start, end) => {
+                    // Un cue PGS efface le précédent : on borne la fin du cue
+                    // précédent de la même piste au début de celui-ci, sinon
+                    // deux images se superposent (la durée des paquets PGS est
+                    // souvent nulle, donc estimée à une seconde).
+                    if let Some(prev) = self.embedded_bitmaps.iter_mut()
+                        .rev().find(|(tr, _, _, _, _)| *tr == track)
+                    {
+                        if prev.4 > start { prev.4 = start; }
+                    }
+                    if bitmaps.is_empty() {
+                        // Composition vide = effacement : rien à afficher, on se
+                        // contente d'avoir borné le cue précédent ci-dessus.
+                        continue;
+                    }
+                    self.next_bitmap_id += 1;
+                    self.embedded_bitmaps.push(
+                        (track, self.next_bitmap_id, std::sync::Arc::new(bitmaps), start, end));
+                    // Garde-fou mémoire : ces cues portent des pixels, pas du
+                    // texte — on en garde beaucoup moins que de lignes.
+                    if self.embedded_bitmaps.len() > 64 {
+                        self.embedded_bitmaps.remove(0);
+                    }
+                }
                 PipelineEvent::SubtitleLine(track, text, start, end) => {
                     // Les paquets sont décodés en avance sur la lecture : on met en file
                     // et update_subtitle() affiche au bon PTS (filtré par piste active).
@@ -403,6 +437,11 @@ impl Player {
             self.current_subtitle = self.embedded_events.iter()
                 .find(|(tr, _, s, e)| *tr == track && *s <= pos && pos <= *e)
                 .map(|(_, t, _, _)| t.clone());
+            self.current_bitmaps = self.embedded_bitmaps.iter()
+                .find(|(tr, _, _, s, e)| *tr == track && *s <= pos && pos <= *e)
+                .map(|(_, id, imgs, _, _)| (*id, imgs.clone()));
+        } else {
+            self.current_bitmaps = None;
         }
     }
 

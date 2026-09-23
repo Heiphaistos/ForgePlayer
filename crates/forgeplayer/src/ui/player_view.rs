@@ -15,6 +15,9 @@ pub fn show(
     video_frame: SharedFrame,
     osd:         Option<&str>,
     image_tex:   Option<&TextureHandle>,
+    // Textures des images de sous-titre (PGS/VOBSUB) du cue courant, avec leur
+    // position et leur taille dans les coordonnées de la vidéo source.
+    sub_bitmaps: &[(TextureHandle, Rect)],
     img_viewer:  &mut ImageViewer,
     aspect_mode: &AspectMode,
     color_space: u32,
@@ -64,8 +67,15 @@ pub fn show(
         draw_buffering_overlay(ui, available, *pct);
     }
 
-    // Sous-titres
-    if let Some(text) = &player.current_subtitle {
+    // Sous-titres bitmap (PGS/VOBSUB/DVB) : incrustés dans le rectangle vidéo,
+    // à l'échelle de la source. Ils remplacent le rendu texte quand ils existent.
+    if !sub_bitmaps.is_empty() {
+        let (src_w, src_h) = player.media_info.as_ref()
+            .and_then(|m| m.video.as_ref())
+            .map(|v| (v.width as f32, v.height as f32))
+            .unwrap_or((video_rect.width(), video_rect.height()));
+        draw_subtitle_bitmaps(ui, video_rect, src_w, src_h, sub_bitmaps);
+    } else if let Some(text) = &player.current_subtitle {
         draw_subtitle(ui, available, text);
     }
 
@@ -75,6 +85,36 @@ pub fn show(
     }
 
     toggle_fs
+}
+
+/// Dessine les images de sous-titre à l'échelle du rectangle vidéo.
+///
+/// Les coordonnées viennent du flux de sous-titres et sont exprimées dans la
+/// résolution de la vidéo source : on les met à l'échelle du rectangle affiché,
+/// sinon un sous-titre 1080p se retrouverait dans un coin d'une fenêtre 4K.
+fn draw_subtitle_bitmaps(
+    ui: &mut Ui,
+    video_rect: Rect,
+    src_w: f32,
+    src_h: f32,
+    bitmaps: &[(TextureHandle, Rect)],
+) {
+    if src_w <= 0.0 || src_h <= 0.0 { return; }
+    let sx = video_rect.width()  / src_w;
+    let sy = video_rect.height() / src_h;
+    let painter = ui.painter();
+    for (tex, src) in bitmaps {
+        let dest = Rect::from_min_size(
+            video_rect.min + Vec2::new(src.min.x * sx, src.min.y * sy),
+            Vec2::new(src.width() * sx, src.height() * sy),
+        );
+        painter.image(
+            tex.id(),
+            dest,
+            Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            Color32::WHITE,
+        );
+    }
 }
 
 // ─── Calcul du rectangle vidéo ──────────────────────────────────────────────

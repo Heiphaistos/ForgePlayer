@@ -45,6 +45,10 @@ pub struct ForgeApp {
     last_mouse_move:   f64,
     image_viewer:      ImageViewer,
     image_texture:     Option<egui::TextureHandle>,
+    /// Textures du cue de sous-titre bitmap courant (identifiant du cue +
+    /// texture et rectangle source de chaque image).
+    sub_bitmap_textures: Vec<(egui::TextureHandle, egui::Rect)>,
+    sub_bitmap_id:       Option<u64>,
     image_path_loaded: String,
     pending_video_frame: Option<omni_core::decoder::DecodedVideoFrame>,
     video_color_space: u32,   // 0=BT601, 1=BT709, 2=BT2020
@@ -105,6 +109,8 @@ impl ForgeApp {
             last_mouse_move: 0.0,
             image_viewer: ImageViewer::default(),
             image_texture: None,
+            sub_bitmap_textures: Vec::new(),
+            sub_bitmap_id: None,
             image_path_loaded: String::new(),
             pending_video_frame: None,
             video_color_space: 1,
@@ -368,6 +374,34 @@ impl ForgeApp {
     /// Publie un frame décodé vers le callback de rendu.
     fn set_video_frame(&mut self, frame: omni_core::decoder::DecodedVideoFrame) {
         *self.video_frame.lock() = Some(frame);
+    }
+
+    /// (Re)construit les textures du cue de sous-titre bitmap courant. Le
+    /// travail n'a lieu qu'au changement de cue : un cue PGS pèse plusieurs
+    /// centaines de kilooctets, le ré-uploader à chaque image serait absurde.
+    fn ensure_subtitle_bitmaps(&mut self, ctx: &Context) {
+        let current_id = self.player.current_bitmaps.as_ref().map(|(id, _)| *id);
+        if current_id == self.sub_bitmap_id { return; }
+        self.sub_bitmap_id = current_id;
+        self.sub_bitmap_textures.clear();
+
+        let Some((_, bitmaps)) = self.player.current_bitmaps.clone() else { return };
+        for (i, bmp) in bitmaps.iter().enumerate() {
+            let img = egui::ColorImage::from_rgba_unmultiplied(
+                [bmp.width as usize, bmp.height as usize],
+                &bmp.rgba,
+            );
+            let tex = ctx.load_texture(
+                format!("sub_bitmap_{i}"),
+                img,
+                egui::TextureOptions::LINEAR,
+            );
+            let rect = egui::Rect::from_min_size(
+                egui::pos2(bmp.x as f32, bmp.y as f32),
+                egui::vec2(bmp.width as f32, bmp.height as f32),
+            );
+            self.sub_bitmap_textures.push((tex, rect));
+        }
     }
 
     fn ensure_image_texture(&mut self, ctx: &Context) {
@@ -676,6 +710,7 @@ impl eframe::App for ForgeApp {
             self.dbg_last_log = 0.0;
         }
         self.ensure_image_texture(ctx);
+        self.ensure_subtitle_bitmaps(ctx);
 
         // Détection espace colorimétrique lors du chargement des métadonnées
         if let Some(info) = &self.player.media_info {
@@ -795,6 +830,7 @@ impl eframe::App for ForgeApp {
                     Arc::clone(&self.video_frame),
                     osd.as_deref(),
                     self.image_texture.as_ref(),
+                    &self.sub_bitmap_textures,
                     &mut self.image_viewer,
                     &self.config.aspect_mode,
                     self.video_color_space,

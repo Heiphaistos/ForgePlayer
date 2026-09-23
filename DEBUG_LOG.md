@@ -214,6 +214,15 @@ Format par entrée : `[STATUT] Zone — description`. STATUT ∈ {FIXED, OPEN, T
 - ⚠ **Le serveur de test doit gérer les requêtes Range** : `python -m http.server` répond 200 au lieu de 206, ce qui corrompt la lecture d'un mp4 dont le `moov` est à la fin (`Invalid NAL unit size`, 7 904 paquets refusés, 0 image décodée). Ce n'était PAS un défaut du lecteur — serveur de test corrigé (`scratchpad/range_server.py`), le même fichier passe ensuite sans une seule erreur.
 - [FIXED] **`file://` ne fonctionnait pas** (défaut connu depuis v1.4.5) : le dialogue d'URL acceptait le schéma mais libavformat le refuse sous Windows. Converti en chemin local (`file:///D:/x.mkv` → `D:/x.mkv`, `%20` décodé, UNC préservé), à l'ouverture donc aussi pour un argument de ligne de commande. Le filtre de `main.rs` rejetait par ailleurs toute URL non-`http` : il accepte désormais n'importe quel schéma.
 
+### Sous-titres bitmap PGS/VOBSUB/DVB (2026-09-23, itération 12 de la boucle)
+
+- [FIXED] **Les sous-titres image n'étaient pas affichés du tout** (limitation connue de longue date, « non supportés »). Les pistes PGS/HDMV, VOBSUB et DVB sont maintenant décodées, converties en RGBA et incrustées dans le rectangle vidéo à l'échelle de la source.
+- Chaîne ajoutée : `SubtitleBitmap` (rectangle RGBA + position) dans `omni-core`, conversion PAL8 → RGBA depuis `AVSubtitleRect` (`data[0]` = index, `data[1]` = palette ARGB), nouvel événement `PipelineEvent::SubtitleBitmap`, cues gardés côté player (64 max, ce sont des pixels), textures egui reconstruites **uniquement au changement de cue**.
+- **Piège du format** : un paquet PGS n'a pas de durée — l'image reste affichée jusqu'à un paquet d'**effacement** (composition sans rectangle). La durée par défaut d'une seconde, héritée du texte, faisait disparaître le sous-titre presque aussitôt. Les compositions vides sont donc transmises elles aussi et bornent le cue précédent ; la durée par défaut passe à 30 s pour une piste bitmap.
+- **Fabrication de l'échantillon de test** : FFmpeg refuse de convertir du texte en bitmap (« Subtitle encoding currently only possible from text to text or bitmap to bitmap »), donc impossible de générer un PGS avec lui. Un générateur `.sup` a été écrit (segments PCS/WDS/PDS/ODS/END, image palettisée, RLE PGS) : `scratchpad/make_pgs.py`. Fichier muxé en MKV, `ffprobe` le reconnaît comme `hdmv_pgs_subtitle`.
+- **Mesure** : sur `pgs_test.mkv`, touche `S` pour activer la piste — le sous-titre s'affiche (bande basse de l'image : **8,94 %** de pixels quasi blancs) puis disparaît au paquet d'effacement (**0,00 %**). Capture à l'appui : texte blanc cerné de noir, centré, à l'échelle de la vidéo.
+- VOBSUB et DVB passent par le même décodeur et le même chemin d'affichage ; seul PGS a pu être vérifié ici, faute d'échantillon.
+
 ### Reste à faire
 
 - [ ] Utiliser les métadonnées de mastering réelles (MaxCLL / master-display) comme pic de tone mapping, au lieu de la valeur figée `max_luminance` de la config.

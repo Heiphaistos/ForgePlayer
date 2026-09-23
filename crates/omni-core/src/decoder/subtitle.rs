@@ -6,6 +6,22 @@ use std::time::Duration;
 static RE_HTML: Lazy<Regex> = Lazy::new(|| Regex::new(r"<[^>]+>").unwrap());
 static RE_ASS:  Lazy<Regex> = Lazy::new(|| Regex::new(r"\{[^}]*\}").unwrap());
 
+/// Une image de sous-titre décodée (PGS/HDMV, VOBSUB, DVB), convertie en RGBA.
+///
+/// Les formats bitmap ne portent pas de texte : le décodeur rend des rectangles
+/// d'index de palette qu'il faut afficher tels quels par-dessus l'image. Les
+/// coordonnées sont celles de la résolution d'origine du sous-titre, que
+/// l'affichage ramène à la taille réelle de la vidéo.
+#[derive(Debug, Clone)]
+pub struct SubtitleBitmap {
+    pub x:      u32,
+    pub y:      u32,
+    pub width:  u32,
+    pub height: u32,
+    /// Pixels RGBA non prémultipliés, `width * height * 4` octets.
+    pub rgba:   Vec<u8>,
+}
+
 /// Événement subtitle avec texte formaté (ASS/SRT normalisé).
 #[derive(Debug, Clone)]
 pub struct SubtitleEvent {
