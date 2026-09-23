@@ -260,6 +260,11 @@ Format par entrée : `[STATUT] Zone — description`. STATUT ∈ {FIXED, OPEN, T
 - **Piège** : appliquer le filtre au seul shader YUV→RGB ne change RIEN pour le HDR (mesuré : 0,02236 → 0,02218). En HDR cette passe rend à la résolution de la SOURCE dans une texture hors écran ; c'est la passe de tone mapping qui réduit ensuite à la taille de la fenêtre. Le filtre doit donc exister dans les deux shaders.
 - **Mesure finale** : énergie hautes fréquences 0,02236 → **0,01578**, soit **+31,6 % → −7,1 %** par rapport à la référence Lanczos (légèrement plus doux, ce qu'on attend d'une moyenne face à un sinc fenêtré).
 
+### Passage en revue après les nouveautés + version 1.7.0 (2026-09-23, itération 18 de la boucle)
+
+- [TESTED-OK] Relecture de six fichiers après les changements des itérations 11 à 17 : `bbb_1080p_sdr.mp4` (1080p SDR), `sdr8_2k.mp4` (2K), `sdr10_4k.mp4` (4K 10 bits SDR), `av1_4k_hdr.mp4` (4K AV1 HDR), `pgs_test.mkv` (sous-titres image), `still_full.mp4` (plage complète). Tous en temps réel (`pos == wall` à ±50 ms), **aucune ligne ERROR ni panique**. Les fichiers sans piste audio affichent logiquement `audio_master=false`.
+- Version portée à **1.7.0** partout (`Cargo.toml` du workspace, `installer/ForgePlayer.iss`, lien du `README.md`), section v1.7.0 écrite dans `RELEASE_NOTES.md`. Binaire vérifié : journalise `ForgePlayer v1.7.0`.
+
 ### Reste à faire
 
 - [ ] Utiliser les métadonnées de mastering réelles (MaxCLL / master-display) comme pic de tone mapping, au lieu de la valeur figée `max_luminance` de la config.

@@ -2,6 +2,29 @@
 
 ---
 
+## v1.7.0 (2026-09-23) — Réseau, sous-titres image, vitesse réelle, image plus nette
+
+### Nouveautés
+
+- **Sous-titres image (PGS/HDMV, VOBSUB, DVB)** : ils n'étaient pas affichés du tout. Les pistes sont décodées, converties en RGBA et incrustées à l'échelle de la vidéo. Les compositions d'effacement sont respectées, sans quoi l'image restait affichée une seconde puis disparaissait.
+- **Sous-titres activés d'office** : une piste correspondant à la langue préférée (sinon la première) est choisie à l'ouverture, comme VLC et mpv. Réglage `subtitle_auto`.
+- **Capture d'image** (`Maj+S` ou menu *Vue*) : le PNG est enregistré dans `Images\ForgePlayer\` à la résolution source, relu depuis le GPU donc identique à l'écran, tone mapping HDR compris.
+- **Reprise de lecture** : la position est mémorisée par fichier (50 au maximum) et reprise à la réouverture. Réglage `resume_playback`.
+- **Vitesse de lecture réelle** : le son est étiré par `atempo` (hauteur conservée). Avant, régler la vitesse n'avait aucun effet dès qu'il y avait du son.
+
+### Corrections
+
+- **Lecture réseau** : aucune option n'était passée à libavformat. Une URL injoignable restait 10 s sur « Chargement… » (désormais 6 s, avec le message d'erreur) et la moindre coupure tuait le flux (reconnexion automatique désormais, vérifiée en coupant le serveur 5 s en pleine lecture 4K). HTTP et HLS testés en 1080p et en 4K HDR.
+- **URL `file://`** : acceptées par le dialogue mais refusées par libavformat sous Windows depuis la v1.4.5 — converties en chemin local, y compris en ligne de commande.
+- **Fourmillement à la réduction d'échelle** : une image 4K dans une fenêtre trois fois plus petite était échantillonnée en bilinéaire, donc deux tiers des texels n'étaient jamais lus (+31,6 % d'énergie hautes fréquences par rapport à un Lanczos). Moyenne 3×3 sur l'empreinte du pixel, dans les deux passes de rendu : l'écart tombe à −7,1 %.
+
+### Vérifications
+
+- AV1 4K HDR 10 bits : décodage matériel D3D11VA, lecture temps réel.
+- Passage en revue après ces changements : 1080p SDR, 2K SDR, 4K SDR 10 bits, 4K AV1 HDR, MKV avec sous-titres PGS et fichier en plage complète — tous lus en temps réel, aucune erreur.
+
+---
+
 ## v1.6.0 (2026-09-23) — HDR juste (fin de l'image brûlée) + 4K/2K fluide
 
 ### Corrections critiques — HDR
