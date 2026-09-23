@@ -108,6 +108,7 @@ pub fn run_demuxer(
         initial_video_dec, video_pkt_rx, video_tx.clone(), event_tx.clone(), eof_ack_tx,
     )?;
     let mut preview_dec: Option<VideoDecoder> = None;
+    let mut first_preview_after_seek = false;
 
     // Une piste audio illisible (codec non supporté, paramètres corrompus) ne
     // doit jamais tuer toute la lecture — avant, `?` propageait cette erreur et
@@ -154,6 +155,7 @@ pub fn run_demuxer(
     // la keyframe mais on jette les frames jusqu'au PTS cible (précision à la frame).
     let mut v_skip_until: Option<f64> = None;
     let mut a_skip_until: Option<f64> = None;
+    let mut first_audio_after_seek = false;
 
     // DBGPROBE (diagnostic temporaire, RUST_LOG=debug)
     let dbg_start = std::time::Instant::now();
@@ -201,6 +203,8 @@ pub fn run_demuxer(
                     preview_after_seek = paused;
                     v_skip_until = Some(pos);
                     a_skip_until = Some(pos);
+                    first_audio_after_seek = true;
+                    first_preview_after_seek = true;
                 }
                 PipelineCommand::SelectAudioTrack(track) => {
                     if let Some(&new_idx) = all_audio_idx.get(track) {
@@ -243,6 +247,7 @@ pub fn run_demuxer(
                     // temps réel généreux pour ne jamais bloquer indéfiniment le
                     // thread demuxer sur un fichier pathologique/corrompu.
                     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(800);
+                    // (même règle que le worker : voir first_preview_after_seek)
                     'preview: loop {
                         if std::time::Instant::now() >= deadline {
                             log::warn!("preview post-seek: délai dépassé avant d'atteindre la cible");
@@ -254,7 +259,18 @@ pub fn run_demuxer(
                             let _ = dec.send_packet(&pkt);
                             let mut sent = false;
                             while let Ok(Some(frame)) = dec.receive_frame() {
-                                // Même logique post-seek : atteindre le PTS cible
+                                // Même règle que le worker vidéo : une image clé
+                                // trop loin de la cible s'affiche telle quelle,
+                                // sinon la preview reste figée le temps de
+                                // décoder tout un GOP 4K (délai dépassé garanti).
+                                if let Some(su) = v_skip_until {
+                                    if first_preview_after_seek {
+                                        first_preview_after_seek = false;
+                                        if su - frame.pts_secs > video_worker::SEEK_CATCHUP_MAX_SECS {
+                                            v_skip_until = None;
+                                        }
+                                    }
+                                }
                                 if let Some(su) = v_skip_until {
                                     if frame.pts_secs < su - 0.05 { continue; }
                                     v_skip_until = None;
@@ -329,7 +345,19 @@ pub fn run_demuxer(
             if let Some(dec) = &mut audio_dec {
                 let _ = dec.send_packet(&packet);
                 while let Ok(Some(frame)) = dec.receive_frame() {
-                    // Post-seek : jeter l'audio entre la keyframe et la cible
+                    // Post-seek : jeter l'audio entre l'image clé et la cible —
+                    // mais seulement si la vidéo fait le même rattrapage (même
+                    // seuil, même point de départ après `av_seek_frame`).
+                    // Au-delà, la vidéo repart de l'image clé : garder l'audio
+                    // aligné dessus, sinon le son part en avance de tout le GOP.
+                    if let Some(su) = a_skip_until {
+                        if first_audio_after_seek {
+                            first_audio_after_seek = false;
+                            if su - frame.pts_secs > video_worker::SEEK_CATCHUP_MAX_SECS {
+                                a_skip_until = None;
+                            }
+                        }
+                    }
                     if let Some(su) = a_skip_until {
                         if frame.pts_secs < su - 0.05 { continue; }
                         a_skip_until = None;

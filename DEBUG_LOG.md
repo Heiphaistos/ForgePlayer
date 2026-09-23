@@ -179,6 +179,17 @@ Format par entrée : `[STATUT] Zone — description`. STATUT ∈ {FIXED, OPEN, T
 - **Dérive audio/vidéo** : `pos - wall` passe de −0,010 s à +0,130 s en 317 s, soit **+0,041 %** — c'est l'écart de cadence entre l'horloge du périphérique audio (qui fait référence) et l'horloge système, pas une dérive de synchronisation : la vidéo suit l'horloge audio, donc l'image reste calée sur le son. Inaudible et invisible.
 - Aucun avertissement ni erreur dans le journal hormis l'absence des services Go optionnels (ports 18080/18081).
 
+### Seek sur 4K HDR : image figée en pause, gel de plusieurs secondes en lecture (2026-09-23, itération 8 de la boucle)
+
+- [FIXED] **Un seek en pause ne rafraîchissait pas l'image** sur un fichier 4K : les deux captures avant/après la touche → étaient rigoureusement identiques (écart 0,0000) et le journal affichait `preview post-seek: délai dépassé avant d'atteindre la cible`. Cause : après `av_seek_frame`, le décodage repart de l'image clé qui précède la cible et l'ancien code décodait TOUTES les images intermédiaires sans rien afficher. Sur ce fichier les images clés sont espacées de 10,4 s (encodage NVENC) : rattraper 1 à 4 s de 4K HEVC 10-bit dépasse largement le budget de 800 ms de la preview.
+- [FIXED] **Même cause en lecture** : après quelques sauts, la position restait figée (26,91 s sur deux relevés consécutifs) avec `buffered=0.00` et `raw_audio_pos=None` — plusieurs secondes d'image gelée et de son coupé.
+- Correctif : la première image décodée après un seek décide. Si l'image clé est à plus de **1 s** (`SEEK_CATCHUP_MAX_SECS`) de la cible, elle s'affiche immédiatement au lieu d'être rattrapée — c'est ce que font VLC et mpv sur les sauts au clavier. En dessous du seuil, le rattrapage exact est conservé. L'audio et la preview appliquent le même seuil, sinon le son partirait en avance de tout le GOP.
+- **Mesure après correctif** (mêmes manipulations, mêmes fichiers) :
+  - seek en pause : écart entre la capture avant et après = **0,0756** (était 0,0000), **0 dépassement de délai** (était 1 par seek).
+  - 5 sauts en lecture : **aucun relevé avec tampon audio vide**, position jamais figée (elle avance à chaque relevé : 21,07 → 31,41 → 40,10 → 31,17 → 34,17 → 42,84…), tampon redescendu à 0,04 s puis remonté à 3,5 s.
+  - Journal : `seek: image clé à 40,06 s pour une cible à 44,24 s — affichage immédiat plutôt qu'un rattrapage de 4,18 s`.
+- **Compromis assumé** : sur un fichier à GOP très long (10,4 s ici), un saut peut se caler jusqu'à ~10 s avant la position demandée. C'est le comportement des autres lecteurs ; l'alternative est un gel de plusieurs secondes.
+
 ### Reste à faire
 
 - [ ] Utiliser les métadonnées de mastering réelles (MaxCLL / master-display) comme pic de tone mapping, au lieu de la valeur figée `max_luminance` de la config.
