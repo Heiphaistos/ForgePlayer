@@ -54,7 +54,7 @@ ForgePlayer est un lecteur multimédia natif Windows construit sur un pipeline R
 
 ### Option recommandée — Portable ZIP
 
-1. Télécharger la dernière archive `ForgePlayer_v1.5.0_Portable.zip` depuis la [page Releases](https://github.com/Heiphaistos/ForgePlayer/releases).
+1. Télécharger la dernière archive `ForgePlayer_v1.6.0_Portable.zip` depuis la [page Releases](https://github.com/Heiphaistos/ForgePlayer/releases).
 2. Extraire dans le dossier de votre choix.
 3. Lancer `launch.bat` (démarre les services Go + le lecteur).
 

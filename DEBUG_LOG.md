@@ -190,6 +190,12 @@ Format par entrée : `[STATUT] Zone — description`. STATUT ∈ {FIXED, OPEN, T
   - Journal : `seek: image clé à 40,06 s pour une cible à 44,24 s — affichage immédiat plutôt qu'un rattrapage de 4,18 s`.
 - **Compromis assumé** : sur un fichier à GOP très long (10,4 s ici), un saut peut se caler jusqu'à ~10 s avant la position demandée. C'est le comportement des autres lecteurs ; l'alternative est un gel de plusieurs secondes.
 
+### Version 1.6.0 alignée partout (2026-09-23, itération 9 de la boucle)
+
+- `Cargo.toml` du workspace (les quatre crates suivent via `version.workspace`), `installer/ForgePlayer.iss` et le lien de téléchargement du `README.md` passent à **1.6.0**. Plus aucune occurrence de `1.5.0` hors journaux.
+- `RELEASE_NOTES.md` : section v1.6.0 complète (corrections HDR, corrections 4K/2K, vérifications chiffrées).
+- **Preuve d'exécution** : le binaire construit journalise `ForgePlayer v1.6.0` au démarrage et lit un fichier sans erreur.
+
 ### Reste à faire
 
 - [ ] Utiliser les métadonnées de mastering réelles (MaxCLL / master-display) comme pic de tone mapping, au lieu de la valeur figée `max_luminance` de la config.

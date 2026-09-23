@@ -2,6 +2,34 @@
 
 ---
 
+## v1.6.0 (2026-09-23) — HDR juste (fin de l'image brûlée) + 4K/2K fluide
+
+### Corrections critiques — HDR
+
+- **[CRITIQUE] L'image HDR sortait brûlée.** Le shader de tone mapping définissait la courbe PQ inverse mais ne l'appelait jamais : le signal PQ, qui n'est pas de la lumière linéaire, était multiplié par `exposition / luminance_max × 10000` (soit ×10 avec les réglages par défaut) puis envoyé au tone mapping. Tout ce qui dépassait ~10 % de code PQ saturait à blanc. Chaîne refaite comme celle de VLC/libplacebo : EOTF PQ ou HLG → luminance absolue en nits → normalisation sur le blanc diffus 203 nits (ITU-R BT.2408) → tone mapping → conversion de gamut BT.2020 → BT.709 → encodage sRGB.
+- **[CRITIQUE] Tout flux 10 bits était traité comme du HDR.** Le chemin HDR était choisi sur la profondeur de bits, donc un fichier 10 bits BT.709 SDR (HEVC Main10, très courant) partait dans le tone mapping PQ et ressortait brûlé lui aussi. C'est maintenant la fonction de transfert du flux qui décide (SDR / PQ / HLG).
+- **[HAUTE] Tone mapping appliqué canal par canal** : le canal dominant saturait avant les autres et délavait les aplats colorés (aplat bleu mesuré 0,17 plus clair que VLC). Le tone mapping porte désormais sur la luminance seule, la chrominance suit le même rapport.
+- **[HAUTE] Courbe par défaut trop claire.** La courbe réelle de VLC a été relevée sur le même plan puis reproduite : c'est du Reinhard étendu avec le pic à `luminance_max / 203`. Écart moyen des quantiles p5→p90 avec VLC : **0,0162** (contre 0,0505 avec l'ACES par canal d'avant).
+- **[MOYENNE] Le pic de tone mapping était figé à 1000 nits.** Il vient maintenant du fichier : MaxCLL, sinon la luminance max de l'écran de mastering, sinon le réglage. Ces valeurs vivent souvent dans les SEI du flux et non dans le conteneur : la sonde décode la première image pour les lire.
+- **HLG** validé sur un vrai fichier HLG (converti, pas seulement re-tagué) : écart moyen de 0,0120 avec VLC.
+
+### Corrections critiques — lecture 4K / 2K
+
+- **[CRITIQUE] Une conversion CPU par image sur tout le décodage matériel.** Les images rapatriées du GPU (NV12 en 8 bits, P010 en 10 bits) passaient systématiquement par `swscale`, plus une passe supplémentaire de 24 Mo par image en 10 bits — plusieurs millisecondes de CPU mono-cœur par image 4K, la cause directe des saccades. NV12 et P010 partent maintenant au GPU sans aucune conversion, via des textures RG semi-planaires, comme le fait VLC.
+- **[CRITIQUE] Les images d'avance étaient jetées.** Quand le décodage prenait de l'avance, le thread vidéo jetait les images qui ne rentraient pas dans la file : 102 sur 480 perdues sur un 4K HDR 24p. Remplacé par une contre-pression bornée : **0 image perdue sur 480**, et 0 sur 7 911 sur un test de 5 minutes.
+- **[CRITIQUE] Un saut figeait l'image.** En pause, un saut ne rafraîchissait pas du tout l'affichage sur un fichier 4K ; en lecture, il gelait la position plusieurs secondes avec le tampon audio vide. Le décodage repartait de l'image clé précédente et rattrapait toutes les images intermédiaires sans rien afficher — jusqu'à 10 s de 4K sur un fichier à GOP long. La première image après un saut décide maintenant : si l'image clé est à plus d'une seconde de la cible, elle s'affiche immédiatement, comme VLC et mpv.
+- **[MOYENNE] La plage de couleur complète (JPEG/PC) était ignorée** : le shader supposait toujours la plage limitée, donc un fichier full range (capture d'écran, webcam, MJPEG ré-encodé) sortait avec les noirs écrasés et les blancs écrêtés. Les matrices sont maintenant dérivées des coefficients de luminance et de la plage réelle.
+- **[FAIBLE] Passe CPU supprimée sur le 10 bits logiciel** : les échantillons partent tels que FFmpeg les produit et le shader applique le facteur d'échelle (exact, là où l'ancien décalage divisait par 1023,98 au lieu de 1023).
+
+### Vérifications (PC de développement, RTX 3070, D3D11VA actif)
+
+- 5 minutes de 4K HDR10 PQ 10 bits avec audio, d'une traite : 7 911 paquets vidéo, 7 911 décodés, **0 perdue**, tampon audio jamais sous 2,32 s, aucune coupure.
+- Rendu comparé à VLC sur plan fixe : HDR 0,0162 d'écart moyen, HLG 0,0120.
+- Fichier 4K 10 bits BT.709 SDR : plus aucun badge HDR ni tone mapping.
+- Plage complète : rendu identique au fichier en plage limitée (écart 0,0045) et conforme à l'image source — VLC, lui, ignore le drapeau sur ce fichier.
+
+---
+
 ## v1.5.0 (2026-07-30) — Vrai décodage matériel 4K/HDR (fin des coupures audio) + renommage ForgePlayer
 
 ### Corrections critiques (lecture 4K/HDR)
