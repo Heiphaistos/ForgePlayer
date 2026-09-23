@@ -41,6 +41,12 @@ pub fn show(ctx: &Context, open: &mut bool, cfg: &mut AppConfig) {
                 });
 
                 ui.horizontal(|ui| {
+                    if ui.checkbox(&mut cfg.subtitle_auto, "Activer les sous-titres automatiquement").changed() {
+                        changed = true;
+                    }
+                });
+
+                ui.horizontal(|ui| {
                     ui.label("Luminance max (nits) — si le fichier n'en annonce pas");
                     let drag = DragValue::new(&mut cfg.max_luminance).range(100.0..=10000.0).speed(50.0);
                     if ui.add(drag).changed() { changed = true; }

@@ -271,6 +271,23 @@ impl Player {
         }
     }
 
+    /// Choisit la piste de sous-titres à activer à l'ouverture : d'abord la
+    /// langue préférée, sinon la première piste. Rien si le fichier n'en a pas.
+    pub fn auto_select_subtitle(&mut self, preferred_lang: &str) {
+        if self.sub_track_idx.is_some() { return; }
+        let Some(info) = &self.media_info else { return };
+        if info.subtitles.is_empty() { return; }
+        let lang = preferred_lang.to_ascii_lowercase();
+        let idx = info.subtitles.iter()
+            .position(|s| s.language.to_ascii_lowercase().starts_with(&lang))
+            .unwrap_or(0);
+        self.sub_track_idx = Some(idx);
+        if let Some(p) = &self.pipeline {
+            p.send_command(PipelineCommand::SelectSubtitleTrack(self.sub_track_idx));
+        }
+        log::info!("sous-titres : piste {idx} activée automatiquement ({} pistes)", info.subtitles.len());
+    }
+
     pub fn next_subtitle_track(&mut self) {
         if let Some(info) = &self.media_info {
             let n = info.subtitles.len();

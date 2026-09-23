@@ -223,6 +223,12 @@ Format par entrée : `[STATUT] Zone — description`. STATUT ∈ {FIXED, OPEN, T
 - **Mesure** : sur `pgs_test.mkv`, touche `S` pour activer la piste — le sous-titre s'affiche (bande basse de l'image : **8,94 %** de pixels quasi blancs) puis disparaît au paquet d'effacement (**0,00 %**). Capture à l'appui : texte blanc cerné de noir, centré, à l'échelle de la vidéo.
 - VOBSUB et DVB passent par le même décodeur et le même chemin d'affichage ; seul PGS a pu être vérifié ici, faute d'échantillon.
 
+### AV1 4K HDR et activation automatique des sous-titres (2026-09-23, itération 13 de la boucle)
+
+- [TESTED-OK] **AV1 4K HDR 10 bits** (`libsvtav1`, BT.2020/PQ, 3840×2160) : `HW accel initialisé: D3D11Va`, badge `AV1 · HDR · 4K UHD`, lecture temps réel (`pos == wall` à ±10 ms), tampon audio 2,1 à 3,2 s. Aucun défaut trouvé, rien à corriger.
+- [FIXED] **Les sous-titres restaient éteints à l'ouverture** : il fallait presser `S`. VLC et mpv activent une piste automatiquement. Nouveau réglage `subtitle_auto` (activé par défaut, case à cocher dans Paramètres) : à l'ouverture, la première piste dont la langue correspond à `subtitle_lang` est activée, sinon la première piste du fichier.
+- **Mesure** : sur `pgs_test.mkv`, sans aucune touche, le journal indique `sous-titres : piste 0 activée automatiquement (1 pistes)` et la bande basse de l'image contient **8,94 %** de pixels quasi blancs — exactement la valeur mesurée quand la piste était activée à la main.
+
 ### Reste à faire
 
 - [ ] Utiliser les métadonnées de mastering réelles (MaxCLL / master-display) comme pic de tone mapping, au lieu de la valeur figée `max_luminance` de la config.

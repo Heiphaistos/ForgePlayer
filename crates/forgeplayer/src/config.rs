@@ -42,6 +42,12 @@ pub struct AppConfig {
     pub volume:              f32,
     pub hw_accel:            String,
     pub subtitle_lang:       String,
+    /// Active automatiquement une piste de sous-titres à l'ouverture, en
+    /// préférant `subtitle_lang`. Sans ça, un fichier sous-titré s'ouvre muet
+    /// de sous-titres tant que l'utilisateur n'a pas pressé S — ce que ne font
+    /// ni VLC ni mpv.
+    #[serde(default = "default_true")]
+    pub subtitle_auto:       bool,
     pub tonemap_mode:        u32,
     pub max_luminance:       f32,
     pub subtitle_service_port: u16,
@@ -66,6 +72,7 @@ impl Default for AppConfig {
             volume:                1.0,
             hw_accel:              "auto".into(),
             subtitle_lang:         "fr".into(),
+            subtitle_auto:         true,
             tonemap_mode:          0,
             max_luminance:         1000.0,
             subtitle_service_port: 18080,
@@ -111,3 +118,5 @@ impl AppConfig {
         self.recent_files.truncate(20);
     }
 }
+
+fn default_true() -> bool { true }

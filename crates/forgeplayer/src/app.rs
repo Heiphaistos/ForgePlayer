@@ -723,6 +723,10 @@ impl eframe::App for ForgeApp {
             // hautes lumières, un master 600 nits en laisse passer trop.
             self.video_peak_nits = info.video.as_ref().and_then(|v| v.peak_nits);
             self.video_full_range = info.video.as_ref().map(|v| v.full_range).unwrap_or(false);
+            if self.config.subtitle_auto {
+                let lang = self.config.subtitle_lang.clone();
+                self.player.auto_select_subtitle(&lang);
+            }
         }
 
         // Titre fenêtre dynamique
