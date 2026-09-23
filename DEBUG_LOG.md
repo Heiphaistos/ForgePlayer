@@ -143,6 +143,14 @@ Format par entrée : `[STATUT] Zone — description`. STATUT ∈ {FIXED, OPEN, T
 - **Mesure** : deux rampes PQ identiques encodées avec `max-cll=1000` et `max-cll=4000`. Journal : « pic annoncé par le fichier = 1000 nits » puis « = 4000 nits ». Rendu : hautes lumières tenues 0,038 plus bas en 4000 nits (x=1,0 : 0,888 → 0,850 ; x=0,8 : 0,762 → 0,734), tons moyens quasi inchangés (−0,006 à mi-course) — exactement le comportement attendu d'un pic plus élevé.
 - Un fichier SDR n'émet aucune ligne HDR (vérifié sur `sdr10_4k.mp4`).
 
+### HLG validé sur un vrai fichier HLG (2026-09-23, itération 4 de la boucle)
+
+- Fichier de test produit par conversion réelle (pas un simple re-tag) : `zscale=t=linear:npl=1000,zscale=t=arib-std-b67:p=bt2020:m=bt2020nc` puis x265 `transfer=arib-std-b67` → `still_hlg_5s.mp4` et `ramp_hlg.mp4`.
+- [TESTED-OK] Détection : journal `HDR: transfert=2 (1=PQ, 2=HLG)` — la courbe HLG est bien sélectionnée, pas la PQ.
+- [TESTED-OK] Rendu comparé à VLC sur le même plan fixe : écart moyen des quantiles p5→p90 = **0,0120** (PQ : 0,0162). Hautes lumières légèrement plus claires que VLC (+0,041 à p90), tons moyens identiques (−0,001 à p50).
+- Les liserés verts sur les fils et la bande pâle à droite sont **dans la source** (artefacts de la conversion zscale) : VLC affiche exactement les mêmes. Pas un défaut du lecteur.
+- Aucun changement de code nécessaire : la voie HLG écrite à l'itération 1 est correcte.
+
 ### Reste à faire
 
 - [ ] Utiliser les métadonnées de mastering réelles (MaxCLL / master-display) comme pic de tone mapping, au lieu de la valeur figée `max_luminance` de la config.
