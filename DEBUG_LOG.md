@@ -204,6 +204,16 @@ Format par entrée : `[STATUT] Zone — description`. STATUT ∈ {FIXED, OPEN, T
 - **Test du binaire packagé** (pas du build de développement) : `dist\ForgePlayer.exe` journalise `ForgePlayer v1.6.0`, détecte `HDR: transfert=1`, affiche l'image correctement (capture à l'appui).
 - Poussé sur GitHub : 9 commits (`ab32ded..4b2fa81`) et release **v1.6.0** publiée avec les deux artefacts — https://github.com/Heiphaistos/ForgePlayer/releases/tag/v1.6.0
 
+### Lecture réseau HTTP/HLS et URL `file://` (2026-09-23, itération 11 de la boucle)
+
+- [TESTED-OK] **HTTP** : 1080p H.264 et 4K HDR10 HEVC 10-bit lus depuis `http://127.0.0.1:8099/…`, cadence temps réel (`pos == wall`), tampon audio 2,4 à 3,6 s.
+- [TESTED-OK] **HLS** : playlist `stream.m3u8` (segments TS de 2 s, 4K HDR) lue, badge HDR et résolution corrects.
+- [FIXED] **Aucune option réseau n'était passée à libavformat.** Conséquences mesurées : une URL injoignable restait 10 s sur « Chargement… » avant l'erreur, et une coupure en cours de lecture terminait le flux définitivement (FFmpeg a `reconnect=0` par défaut). Ajout de `timeout=3 s` (connexion TCP), `rw_timeout=8 s` (lectures), `reconnect`, `reconnect_streamed`, `reconnect_delay_max=4`, `user_agent=ForgePlayer/<version>` — appliquées à la sonde ET à l'ouverture, les deux tentant la connexion.
+- **Mesure** : URL injoignable signalée en **6 s** au lieu de 10 s, avec le message exact à l'écran. Coupure réseau provoquée pendant une lecture 4K (serveur tué 5 s) : le journal montre `Will reconnect at 127926316 in 0/1 second(s)` et **la lecture continue sans arrêt** (position 34,33 → 46,39 s, tampon audio 2,9 à 3,6 s).
+- ⚠ **`reconnect_on_network_error` est un piège** : il fait aussi réessayer la connexion INITIALE en boucle, donc une URL injoignable n'échoue plus jamais (mesuré : aucune erreur après 16 s). Option volontairement non activée.
+- ⚠ **Le serveur de test doit gérer les requêtes Range** : `python -m http.server` répond 200 au lieu de 206, ce qui corrompt la lecture d'un mp4 dont le `moov` est à la fin (`Invalid NAL unit size`, 7 904 paquets refusés, 0 image décodée). Ce n'était PAS un défaut du lecteur — serveur de test corrigé (`scratchpad/range_server.py`), le même fichier passe ensuite sans une seule erreur.
+- [FIXED] **`file://` ne fonctionnait pas** (défaut connu depuis v1.4.5) : le dialogue d'URL acceptait le schéma mais libavformat le refuse sous Windows. Converti en chemin local (`file:///D:/x.mkv` → `D:/x.mkv`, `%20` décodé, UNC préservé), à l'ouverture donc aussi pour un argument de ligne de commande. Le filtre de `main.rs` rejetait par ailleurs toute URL non-`http` : il accepte désormais n'importe quel schéma.
+
 ### Reste à faire
 
 - [ ] Utiliser les métadonnées de mastering réelles (MaxCLL / master-display) comme pic de tone mapping, au lieu de la valeur figée `max_luminance` de la config.

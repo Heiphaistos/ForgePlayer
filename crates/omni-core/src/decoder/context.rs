@@ -12,13 +12,57 @@ pub struct DecodeContext {
     pub hw_accel: Option<HwAccelContext>,
 }
 
+/// Vrai pour une source réseau (le reste est un chemin local).
+pub(crate) fn is_network_url(path: &str) -> bool {
+    const SCHEMES: [&str; 10] = [
+        "http://", "https://", "rtsp://", "rtmp://", "rtmps://",
+        "udp://", "rtp://", "srt://", "mms://", "mmsh://",
+    ];
+    let lower = path.to_ascii_lowercase();
+    SCHEMES.iter().any(|s| lower.starts_with(s))
+}
+
+/// Options passées à libavformat pour une source réseau.
+///
+/// Sans elles, une URL injoignable bloque sur le délai par défaut de FFmpeg
+/// (mesuré : 10 s d'écran « Chargement… » avant le message d'erreur) et la
+/// moindre coupure réseau en cours de lecture met fin au flux définitivement.
+/// Avec, l'échec est annoncé en ~5 s et une coupure passagère est rattrapée
+/// automatiquement, comme le font VLC et mpv.
+pub(crate) fn network_options() -> ffmpeg::Dictionary<'static> {
+    let mut opts = ffmpeg::Dictionary::new();
+    // Délais en microsecondes : `timeout` borne la connexion TCP elle-même,
+    // `rw_timeout` les lectures/écritures bloquantes ensuite.
+    // La sonde puis l'ouverture réelle tentent chacune la connexion : un
+    // délai de 3 s borne l'échec total à ~6 s d'attente pour l'utilisateur.
+    opts.set("timeout", "3000000");
+    // Les lectures, elles, restent tolérantes : un flux en direct peut marquer
+    // une pause légitime sans que la lecture doive s'arrêter.
+    opts.set("rw_timeout", "8000000");
+    // Reconnexion automatique après une coupure EN COURS de lecture.
+    // ⚠ Ne PAS activer `reconnect_on_network_error` : il fait aussi réessayer
+    // la connexion initiale en boucle, donc une URL injoignable n'échoue
+    // jamais (mesuré : plus aucune erreur au bout de 16 s, contre 10 s sans
+    // l'option).
+    opts.set("reconnect", "1");
+    opts.set("reconnect_streamed", "1");
+    opts.set("reconnect_delay_max", "4");
+    opts.set("user_agent", concat!("ForgePlayer/", env!("CARGO_PKG_VERSION")));
+    opts
+}
+
 impl DecodeContext {
     /// Ouvre un fichier local ou une URL réseau (HTTP/RTSP/RTMP/HLS).
     pub fn open(path: &str, preferred_hw: Option<&str>) -> Result<Self> {
         ffmpeg::init().context("ffmpeg::init")?;
 
-        let format_ctx = ffmpeg::format::input(&path)
-            .with_context(|| format!("impossible d'ouvrir '{path}'"))?;
+        let format_ctx = if is_network_url(path) {
+            ffmpeg::format::input_with_dictionary(&path, network_options())
+                .with_context(|| format!("impossible d'ouvrir '{path}'"))?
+        } else {
+            ffmpeg::format::input(&path)
+                .with_context(|| format!("impossible d'ouvrir '{path}'"))?
+        };
 
         let video_stream_idx = format_ctx
             .streams()

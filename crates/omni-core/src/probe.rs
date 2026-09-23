@@ -69,8 +69,15 @@ pub fn probe_file(path: &Path) -> Result<MediaInfo> {
     ffmpeg::init().context("ffmpeg init")?;
 
     let path_str = path.to_string_lossy().to_string();
-    let mut ctx = ffmpeg::format::input(&path)
-        .with_context(|| format!("ouverture de {path_str}"))?;
+    // Même traitement que l'ouverture principale : sans options réseau, la
+    // sonde bloque sur le délai par défaut de FFmpeg avant de rendre la main.
+    let mut ctx = if crate::decoder::context::is_network_url(&path_str) {
+        ffmpeg::format::input_with_dictionary(&path, crate::decoder::context::network_options())
+            .with_context(|| format!("ouverture de {path_str}"))?
+    } else {
+        ffmpeg::format::input(&path)
+            .with_context(|| format!("ouverture de {path_str}"))?
+    };
 
     let format_name = ctx.format().name().to_string();
     let duration_secs = ctx.duration() as f64 / f64::from(ffmpeg::ffi::AV_TIME_BASE);

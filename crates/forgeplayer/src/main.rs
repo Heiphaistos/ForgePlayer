@@ -22,8 +22,13 @@ fn main() -> Result<()> {
     let cfg = config::AppConfig::load();
 
     // Fichier passé en argument (association de fichiers / « Ouvrir avec » / CLI)
-    let initial_file = std::env::args().nth(1)
-        .filter(|p| p.starts_with("http") || std::path::Path::new(p).exists());
+    // Une URL (http, file://, rtsp…) ou un chemin existant. Le filtre laisse
+    // passer tout ce qui porte un schéma : `file://` est converti en chemin
+    // local plus loin (app::ForgeApp::local_path_from_url), et les autres
+    // schémas sont gérés par libavformat.
+    let initial_file = std::env::args().nth(1).filter(|p| {
+        p.contains("://") || std::path::Path::new(p).exists()
+    });
 
     let options = NativeOptions {
         viewport: ViewportBuilder::default()

@@ -156,7 +156,29 @@ impl ForgeApp {
             || (now - self.last_mouse_move) < 3.0
     }
 
+    /// `file:///C:/film.mkv` → `C:/film.mkv`. Le dialogue accepte le schéma
+    /// `file://`, mais libavformat le refuse sous Windows (ENOENT) : sans cette
+    /// conversion, ouvrir un fichier local par son URL échoue toujours.
+    /// Les autres schémas passent tels quels.
+    fn local_path_from_url(url: &str) -> String {
+        let Some(rest) = url.strip_prefix("file://") else { return url.to_string() };
+        let rest = rest.strip_prefix('/').unwrap_or(rest);
+        // Un chemin UNC (file://serveur/partage) garde ses deux antislashs.
+        if rest.starts_with('/') || url.starts_with("file://///") {
+            return url.to_string();
+        }
+        let decoded = rest.replace("%20", " ");
+        if decoded.len() >= 2 && decoded.as_bytes()[1] == b':' {
+            decoded
+        } else {
+            format!("//{decoded}")
+        }
+    }
+
     fn open_file(&mut self, path: String) {
+        // Vaut aussi pour un chemin passé en ligne de commande : Windows
+        // « Ouvrir avec » et certains navigateurs passent une URL file://.
+        let path = Self::local_path_from_url(&path);
         log::info!("ouverture: {path}");
         *self.video_frame.lock() = None;
         self.video_transfer = 0;
