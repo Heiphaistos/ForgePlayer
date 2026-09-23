@@ -278,6 +278,14 @@ Format par entrée : `[STATUT] Zone — description`. STATUT ∈ {FIXED, OPEN, T
 - **6 tests unitaires** ajoutés (`cargo test -p omni-audio`, tous verts) : mono dupliqué, stéréo inchangée, 5.1 et 7.1 à pleine échelle qui donnent exactement 1,0 sans écrêtage, canal avant gauche seul qui laisse la droite muette (0,414 / 0,000), LFE ignoré, longueur de sortie.
 - **Lecture réelle** d'un fichier 5.1 AC-3 448 kb/s (six tonalités distinctes) : périphérique ouvert en stéréo, `audio_master=true`, tampon 2,5 s, cadence temps réel, aucune erreur.
 
+### Coût processeur mesuré face à VLC (2026-09-23, itération 21 de la boucle)
+
+- **Comparaison sur le même fichier 4K HDR10** (330 s, D3D11VA) : ForgePlayer **80 % d'un cœur** (63,8 s de processeur pour 80 s de lecture), VLC **8 %** (6,3 s). Mémoire : 1,8 Go contre 1,5 Go.
+- **Profil par image 4K** (sondes `DBGPERF`, `RUST_LOG=debug`) : rapatriement GPU→RAM **17,85 ms**, extraction des plans **5,36 ms**, envoi vers le GPU **2,42 ms** — soit ~25,6 ms par image à 24 img/s, ce qui explique la mesure.
+- [FIXED] **La frame système de destination était réallouée à chaque image** : `av_hwframe_transfer_data` sur une frame vide alloue 24 Mo par image en 4K. Elle est désormais réutilisée d'une image à l'autre (sortie de `self` le temps du traitement pour ne pas bloquer l'emprunt du scaler). **Mesure : 80 % → 59 % d'un cœur**, rapatriement 17,85 → 15,42 ms, extraction 5,36 → 4,43 ms.
+- **Limite restante, chiffrée** : les 15,4 ms qui restent sont la copie GPU→RAM elle-même, inhérente au mode « décodage matériel puis rapatriement ». VLC ne la paie pas : il garde la surface sur le GPU (zéro-copie D3D11). C'est le seul écart de performance encore ouvert, et le chemin pour le fermer est l'interopérabilité D3D11 ↔ wgpu, qui suppose de forcer le backend DX12 (l'application tourne actuellement sur Vulkan) et de passer par `wgpu_hal`.
+- Compatibilité vérifiée au passage, sans anomalie : **VFR** (cadence variable), **ProRes 422 10 bits**, audio **44,1 kHz** (pas de dérive : `pos` suit `wall`), fichier 1918×1078.
+
 ### Reste à faire
 
 - [ ] Utiliser les métadonnées de mastering réelles (MaxCLL / master-display) comme pic de tone mapping, au lieu de la valeur figée `max_luminance` de la config.

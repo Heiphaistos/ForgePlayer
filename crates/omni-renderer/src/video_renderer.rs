@@ -34,6 +34,8 @@ pub struct VideoRenderer {
     /// Facteur de remise à l'échelle des échantillons de la texture (le
     /// 10-bit planaire de FFmpeg est aligné sur les bits bas).
     current_sample_scale: f32,
+    prof_n:  u64,
+    prof_up: f64,
     /// Vrai si le device a accordé `TEXTURE_FORMAT_16BIT_NORM` — sinon le
     /// contenu HDR 10-bit est affiché en 8-bit (repli silencieux, pas pire
     /// qu'avant cette fonctionnalité, jamais un crash).
@@ -226,6 +228,7 @@ impl VideoRenderer {
             current_semi_planar: false,
             current_full_range: false,
             current_sample_scale: 1.0,
+            prof_n: 0, prof_up: 0.0,
             supports_16bit: device.features().contains(Features::TEXTURE_FORMAT_16BIT_NORM),
         })
     }
@@ -271,7 +274,14 @@ impl VideoRenderer {
             frame.height,
             TexLayout { semi, bits16 },
         );
+        let t_up = std::time::Instant::now();
         textures.upload(queue, frame);
+        self.prof_n += 1;
+        self.prof_up += t_up.elapsed().as_secs_f64() * 1000.0;
+        if self.prof_n % 48 == 0 {
+            log::debug!("DBGPERF upload GPU: {:.2} ms/frame (sur {} frames)",
+                self.prof_up / self.prof_n as f64, self.prof_n);
+        }
 
         let yv = textures.y.create_view(&Default::default());
         let uv = textures.u.create_view(&Default::default());

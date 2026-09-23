@@ -28,6 +28,12 @@ pub struct VideoDecoder {
     scaler_src_h:   u32,
     scaler_src_fmt: Option<ffmpeg::format::Pixel>,
     scaler_target_fmt: Option<ffmpeg::format::Pixel>,
+    /// Frame système réutilisée pour le rapatriement GPU : `av_hwframe_transfer_data`
+    /// alloue sinon 24 Mo à chaque image en 4K, et cette allocation se paie.
+    sw_frame: ffmpeg::util::frame::video::Video,
+    prof_n:  u64,
+    prof_dl: f64,
+    prof_ex: f64,
 }
 
 impl VideoDecoder {
@@ -40,6 +46,8 @@ impl VideoDecoder {
             scaler_src_h:   0,
             scaler_src_fmt: None,
             scaler_target_fmt: None,
+            sw_frame: ffmpeg::util::frame::video::Video::empty(),
+            prof_n: 0, prof_dl: 0.0, prof_ex: 0.0,
         })
     }
 
@@ -94,22 +102,30 @@ impl VideoDecoder {
         // SwsContext) ne connaît que des frames logicielles. `pts_secs` a déjà
         // été lu ci-dessus : av_hwframe_transfer_data ne copie pas le PTS, pas
         // besoin de le relire sur la frame téléchargée.
-        let raw = if is_hw_format(raw.format()) {
-            match download_hw_frame(&raw) {
-                Ok(sw) => sw,
-                Err(e) => {
-                    log::warn!("téléchargement frame GPU échoué, frame ignorée: {e:#}");
-                    return Ok(None);
-                }
+        let t_dl = std::time::Instant::now();
+        // La frame système de destination est réutilisée d'une image à l'autre :
+        // laissée vide, `av_hwframe_transfer_data` réalloue 24 Mo par image en
+        // 4K. On la sort de `self` le temps du traitement pour ne pas bloquer
+        // l'emprunt du scaler, puis on la remet en place.
+        let mut sw = std::mem::replace(
+            &mut self.sw_frame,
+            ffmpeg::util::frame::video::Video::empty(),
+        );
+        let is_hw = is_hw_format(raw.format());
+        if is_hw {
+            if let Err(e) = download_hw_frame_into(&mut sw, &raw) {
+                log::warn!("téléchargement frame GPU échoué, frame ignorée: {e:#}");
+                self.sw_frame = sw;
+                return Ok(None);
             }
-        } else {
-            raw
-        };
+        }
+        let raw: &ffmpeg::util::frame::video::Video = if is_hw { &sw } else { &raw };
 
         // Conversion de format si nécessaire (ex: yuv420p10le nvidia → yuv420p10le
         // uniforme, ou tout format exotique → yuv420p)
         let target_fmt = Self::desired_target(raw.format());
-        let frame = if raw.format() != target_fmt {
+        let converted_frame;
+        let frame: &ffmpeg::util::frame::video::Video = if raw.format() != target_fmt {
             // Rebuild scaler if source dimensions, pixel format, or target changed.
             let needs_rebuild = self.scaler.is_none()
                 || self.scaler_src_w   != raw.width()
@@ -142,22 +158,38 @@ impl VideoDecoder {
 
             let scaler = self.scaler.as_mut().expect("scaler vient d'être initialisé");
             let mut converted = ffmpeg::util::frame::video::Video::empty();
-            scaler.run(&raw, &mut converted)?;
-            converted
+            if let Err(e) = scaler.run(raw, &mut converted) {
+                self.sw_frame = sw;
+                return Err(e).context("conversion de format");
+            }
+            converted_frame = converted;
+            &converted_frame
         } else {
             raw
         };
 
-        let (planes, strides, format) = extract_planes(&frame);
+        let dl_ms = t_dl.elapsed().as_secs_f64() * 1000.0;
+        let t_ex = std::time::Instant::now();
+        let (planes, strides, format) = extract_planes(frame);
+        let ex_ms = t_ex.elapsed().as_secs_f64() * 1000.0;
+        self.prof_n += 1;
+        self.prof_dl += dl_ms;
+        self.prof_ex += ex_ms;
+        if self.prof_n % 48 == 0 {
+            log::debug!("DBGPERF decode: rapatriement GPU {:.2} ms/frame, extraction plans {:.2} ms/frame (sur {} frames)",
+                self.prof_dl / self.prof_n as f64, self.prof_ex / self.prof_n as f64, self.prof_n);
+        }
 
-        Ok(Some(DecodedVideoFrame {
+        let out = DecodedVideoFrame {
             pts_secs,
             width:   frame.width(),
             height:  frame.height(),
             format,
             planes,
             strides,
-        }))
+        };
+        self.sw_frame = sw;
+        Ok(Some(out))
     }
 
     pub fn width(&self)  -> u32 { self.decoder.width() }
@@ -227,15 +259,15 @@ fn is_hw_format(fmt: ffmpeg::format::Pixel) -> bool {
 /// mémoire système. Format de sortie non fixé (`Video::empty()` laisse
 /// `format = AV_PIX_FMT_NONE`) : FFmpeg choisit automatiquement le format
 /// natif du hwframe (NV12 8-bit ou P010LE 10-bit selon la source).
-fn download_hw_frame(
+fn download_hw_frame_into(
+    dst: &mut ffmpeg::util::frame::video::Video,
     src: &ffmpeg::util::frame::video::Video,
-) -> Result<ffmpeg::util::frame::video::Video> {
-    let mut sw = ffmpeg::util::frame::video::Video::empty();
+) -> Result<()> {
     let ret = unsafe {
-        ffmpeg::ffi::av_hwframe_transfer_data(sw.as_mut_ptr(), src.as_ptr(), 0)
+        ffmpeg::ffi::av_hwframe_transfer_data(dst.as_mut_ptr(), src.as_ptr(), 0)
     };
     if ret < 0 {
         anyhow::bail!("av_hwframe_transfer_data a échoué (code {ret})");
     }
-    Ok(sw)
+    Ok(())
 }
