@@ -49,6 +49,8 @@ pub struct ForgeApp {
     /// texture et rectangle source de chaque image).
     sub_bitmap_textures: Vec<(egui::TextureHandle, egui::Rect)>,
     sub_bitmap_id:       Option<u64>,
+    /// Capture d'image en cours : demande et résultat partagés avec le rendu.
+    snapshot:            crate::video_callback::SharedSnapshot,
     image_path_loaded: String,
     pending_video_frame: Option<omni_core::decoder::DecodedVideoFrame>,
     video_color_space: u32,   // 0=BT601, 1=BT709, 2=BT2020
@@ -57,6 +59,9 @@ pub struct ForgeApp {
     dbg_start:         Option<std::time::Instant>,
     dbg_last_log:      f64,
 }
+
+/// Caractères interdits dans un nom de fichier Windows.
+const INVALID_FILENAME_CHARS: &[char] = &['/', '\\', ':', '*', '?', '\"', '<', '>', '|'];
 
 impl ForgeApp {
     pub fn new(cc: &CreationContext, config: AppConfig, initial_file: Option<String>) -> Self {
@@ -71,6 +76,11 @@ impl ForgeApp {
             // Second pass (chemin HDR) : tone mapping PQ→SDR. Toujours créé —
             // coût quasi nul tant qu'aucun contenu HDR n'est lu (bind group
             // vide, render() ne dessine rien).
+            resources.callback_resources.insert(
+                crate::video_callback::SnapshotTonemapper(
+                    omni_renderer::HdrTonemapper::new(&rs.device, omni_renderer::SNAPSHOT_FORMAT),
+                ),
+            );
             resources.callback_resources.insert(
                 omni_renderer::HdrTonemapper::new(&rs.device, rs.target_format)
             );
@@ -111,6 +121,7 @@ impl ForgeApp {
             image_texture: None,
             sub_bitmap_textures: Vec::new(),
             sub_bitmap_id: None,
+            snapshot: Default::default(),
             image_path_loaded: String::new(),
             pending_video_frame: None,
             video_color_space: 1,
@@ -376,6 +387,49 @@ impl ForgeApp {
         *self.video_frame.lock() = Some(frame);
     }
 
+    /// Demande une capture de l'image affichée. Le rendu ayant lieu sur le GPU,
+    /// c'est le callback de peinture qui la relit à la frame suivante ;
+    /// `collect_snapshot` écrit ensuite le fichier.
+    fn request_snapshot(&mut self) {
+        if self.player.is_image_mode() || self.player.media_info.is_none() {
+            return;
+        }
+        self.snapshot.requested.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.set_osd("Capture d'image…");
+    }
+
+    /// Écrit la capture relue par le GPU dans le dossier Images de
+    /// l'utilisateur, nommée d'après le média et la position.
+    fn collect_snapshot(&mut self) {
+        let Some((w, h, pixels)) = self.snapshot.result.lock().take() else { return };
+        let dir = dirs::picture_dir()
+            .unwrap_or_else(std::env::temp_dir)
+            .join("ForgePlayer");
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            log::warn!("capture d'image : {dir:?} non créable: {e}");
+            self.set_osd("Capture impossible");
+            return;
+        }
+        let stem = self.player.display_title()
+            .map(|t| t.replace(INVALID_FILENAME_CHARS, "_"))
+            .unwrap_or_else(|| "capture".to_string());
+        let path = dir.join(format!("{stem}_{:.0}s.png", self.player.position.max(0.0)));
+
+        match image::RgbaImage::from_raw(w, h, pixels) {
+            Some(img) => match img.save(&path) {
+                Ok(()) => {
+                    log::info!("capture d'image : {}", path.display());
+                    self.set_osd(format!("Image enregistrée : {}", path.display()));
+                }
+                Err(e) => {
+                    log::warn!("capture d'image : écriture échouée: {e}");
+                    self.set_osd("Capture impossible");
+                }
+            },
+            None => log::warn!("capture d'image : dimensions incohérentes {w}×{h}"),
+        }
+    }
+
     /// (Re)construit les textures du cue de sous-titre bitmap courant. Le
     /// travail n'a lieu qu'au changement de cue : un cue PGS pèse plusieurs
     /// centaines de kilooctets, le ré-uploader à chaque image serait absurde.
@@ -490,7 +544,11 @@ impl ForgeApp {
             self.player.toggle_mute();
             self.set_osd(if self.player.muted { "Muet" } else { "Son actif" });
         }
-        if k_s      { self.player.next_subtitle_track(); }
+        if k_s {
+            // Maj+S capture l'image (comme VLC), S seul change de piste de
+            // sous-titres.
+            if shift { self.request_snapshot(); } else { self.player.next_subtitle_track(); }
+        }
         if k_a      { self.player.next_audio_track(); }
         if k_n      { self.playlist_next(); }
         if k_p      { self.playlist_prev(); }
@@ -711,6 +769,7 @@ impl eframe::App for ForgeApp {
         }
         self.ensure_image_texture(ctx);
         self.ensure_subtitle_bitmaps(ctx);
+        self.collect_snapshot();
 
         // Détection espace colorimétrique lors du chargement des métadonnées
         if let Some(info) = &self.player.media_info {
@@ -842,6 +901,7 @@ impl eframe::App for ForgeApp {
                     self.video_transfer,
                     self.config.tonemap_mode,
                     self.video_peak_nits.unwrap_or(self.config.max_luminance),
+                    Arc::clone(&self.snapshot),
                 );
             });
         if toggle_fs {
@@ -983,6 +1043,11 @@ impl ForgeApp {
             ui.menu_button("Vue", |ui| {
                 ui.checkbox(&mut self.show_playlist, "Playlist  Ctrl+P");
                 if ui.checkbox(&mut self.show_info, "Infos média  I").changed() {}
+                ui.separator();
+                if ui.button("📷 Capture d'image  Maj+S").clicked() {
+                    self.request_snapshot();
+                    ui.close_menu();
+                }
                 ui.separator();
                 let fs_label = if self.is_fullscreen { "🗗 Quitter plein écran  F" } else { "⛶ Plein écran  F" };
                 if ui.button(fs_label).clicked() {

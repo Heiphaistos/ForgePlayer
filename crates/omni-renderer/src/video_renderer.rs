@@ -14,6 +14,8 @@ pub struct VideoRenderer {
     /// encodé PQ (pas encore de la lumière linéaire), qu'`HdrTonemapper`
     /// consomme ensuite pour le vrai tone mapping avant affichage SDR.
     pipeline_offscreen: RenderPipeline,
+    /// Même rendu, vers une texture 8 bits relue par la capture d'image.
+    pipeline_snapshot:  RenderPipeline,
     sampler:           Sampler,
     bind_group_layout: BindGroupLayout,
     bind_group:        Option<BindGroup>,
@@ -40,6 +42,11 @@ pub struct VideoRenderer {
 
 /// Format de la texture intermédiaire HDR (RGB encodé PQ, pas encore tonemap).
 pub const HDR_OFFSCREEN_FORMAT: TextureFormat = TextureFormat::Rgba16Float;
+
+/// Format de la texture de capture d'image. Non-sRGB : le shader écrit déjà
+/// des valeurs encodées sRGB, un format `...Srgb` les encoderait une seconde
+/// fois et la capture ressortirait délavée par rapport à l'écran.
+pub const SNAPSHOT_FORMAT: TextureFormat = TextureFormat::Rgba8Unorm;
 
 /// Uniforms envoyés au shader — layout colonne-major pour WGSL mat4x4.
 /// `matrix[i]` = ième colonne. Vecteur input = [y', u', v', 1.0].
@@ -202,10 +209,12 @@ impl VideoRenderer {
 
         let pipeline            = make_pipeline(surface_format, "video_pipeline");
         let pipeline_offscreen  = make_pipeline(HDR_OFFSCREEN_FORMAT, "video_pipeline_hdr_offscreen");
+        let pipeline_snapshot   = make_pipeline(SNAPSHOT_FORMAT, "video_pipeline_snapshot");
 
         Ok(Self {
             pipeline,
             pipeline_offscreen,
+            pipeline_snapshot,
             sampler,
             bind_group_layout,
             bind_group: None,
@@ -299,7 +308,22 @@ impl VideoRenderer {
     /// `paint()` d'egui_wgpu ne fournit qu'un seul RenderPass déjà lié au
     /// swapchain (impossible d'y rediriger la sortie). Appelé depuis
     /// `prepare()`, avant le pass principal d'egui.
+    /// Rend l'image vers une texture 8 bits destinée à la capture (contenu SDR
+    /// ou source déjà affichable telle quelle).
+    pub fn render_to_snapshot(&self, encoder: &mut CommandEncoder, target: &TextureView) {
+        self.render_offscreen_with(&self.pipeline_snapshot, encoder, target);
+    }
+
     pub fn render_to_offscreen(&self, encoder: &mut CommandEncoder, target: &TextureView) {
+        self.render_offscreen_with(&self.pipeline_offscreen, encoder, target);
+    }
+
+    fn render_offscreen_with(
+        &self,
+        pipeline: &RenderPipeline,
+        encoder:  &mut CommandEncoder,
+        target:   &TextureView,
+    ) {
         let Some(bg) = &self.bind_group else { return };
         let mut rp = encoder.begin_render_pass(&RenderPassDescriptor {
             label: Some("video_hdr_offscreen_pass"),
@@ -312,7 +336,7 @@ impl VideoRenderer {
             timestamp_writes: None,
             occlusion_query_set: None,
         });
-        rp.set_pipeline(&self.pipeline_offscreen);
+        rp.set_pipeline(pipeline);
         rp.set_bind_group(0, bg, &[]);
         rp.set_bind_group(1, &self.uniform_bg, &[]);
         rp.draw(0..4, 0..1);

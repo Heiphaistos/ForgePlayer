@@ -229,6 +229,14 @@ Format par entrée : `[STATUT] Zone — description`. STATUT ∈ {FIXED, OPEN, T
 - [FIXED] **Les sous-titres restaient éteints à l'ouverture** : il fallait presser `S`. VLC et mpv activent une piste automatiquement. Nouveau réglage `subtitle_auto` (activé par défaut, case à cocher dans Paramètres) : à l'ouverture, la première piste dont la langue correspond à `subtitle_lang` est activée, sinon la première piste du fichier.
 - **Mesure** : sur `pgs_test.mkv`, sans aucune touche, le journal indique `sous-titres : piste 0 activée automatiquement (1 pistes)` et la bande basse de l'image contient **8,94 %** de pixels quasi blancs — exactement la valeur mesurée quand la piste était activée à la main.
 
+### Capture d'image (2026-09-23, itération 14 de la boucle)
+
+- [NOUVEAU] **Capture de l'image affichée** — fonction que VLC a depuis toujours et qui manquait ici. `Maj+S` ou menu *Vue → Capture d'image*. Le fichier va dans `Images\ForgePlayer\<titre>_<position>s.png`, à la **résolution source** (3840×2160 sur le fichier de test), et un OSD annonce le chemin.
+- Implémentation par **relecture GPU** : les passes d'affichage sont rejouées vers une texture hors écran (`SNAPSHOT_FORMAT = Rgba8Unorm`), puis `copy_texture_to_buffer` + `map_async`. L'image enregistrée est donc exactement celle qui est vue — tone mapping HDR, matrice de couleur, plage et échelle 10 bits comprises — sans dupliquer ces calculs sur le processeur.
+- ⚠ Format non-sRGB volontaire : le shader écrit déjà des valeurs encodées sRGB, une texture `...Srgb` les aurait encodées deux fois.
+- **Mesure** : quantiles de luminance (p5/p25/p50/p75/p95) du PNG enregistré **0,132 / 0,250 / 0,538 / 0,853 / 1,000** contre **0,134 / 0,250 / 0,528 / 0,853 / 1,000** pour la fenêtre affichée — écart maximal 0,010, dû au ré-échantillonnage de la fenêtre (1238 px) vers la source (3840 px).
+- ⚠ `pilote.py` n'envoie que des touches simples : le raccourci `Maj+S` n'est pas testable par ce canal, le test passe par le clic sur l'entrée de menu (qui appelle le même code).
+
 ### Reste à faire
 
 - [ ] Utiliser les métadonnées de mastering réelles (MaxCLL / master-display) comme pic de tone mapping, au lieu de la valeur figée `max_luminance` de la config.
