@@ -299,6 +299,11 @@ Format par entrée : `[STATUT] Zone — description`. STATUT ∈ {FIXED, OPEN, T
 - Aucune régression de fluidité : 960 paquets, 960 images décodées, **0 perdue**, `pos == wall`, tampon audio sain.
 - Pour situer : VLC occupait 1,5 Go sur ce même fichier — l'écart de mémoire est donc refermé.
 
+### Publication v1.7.1 (2026-09-23, itération 24 de la boucle)
+
+- Version portée à 1.7.1 partout, notes de version écrites, binaires et installateur signés, `ForgePlayer_v1.7.1_Portable.zip` (99,1 Mo) et `ForgePlayer_v1.7.1_Setup.exe` (67,4 Mo) publiés : https://github.com/Heiphaistos/ForgePlayer/releases/tag/v1.7.1 (2 fichiers, état `uploaded`).
+- **Test du binaire packagé** sur le fichier 5.1 AC-3 : journal `ForgePlayer v1.7.1`, périphérique ouvert en stéréo, 521 Mo de mémoire résidente en 1080p.
+
 ### Reste à faire
 
 - [ ] Utiliser les métadonnées de mastering réelles (MaxCLL / master-display) comme pic de tone mapping, au lieu de la valeur figée `max_luminance` de la config.
