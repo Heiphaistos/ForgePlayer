@@ -22,6 +22,10 @@ pub enum PixelFormat {
     /// envoyée au GPU sans conversion.
     P010Le,
     Rgba,        // fallback RGBA
+    /// Image restée sur le GPU : `DecodedVideoFrame::hw_surface()` donne la
+    /// texture D3D11 et son indice dans le tableau. Aucun octet n'a transité
+    /// par la mémoire centrale.
+    D3d11,
 }
 
 impl PixelFormat {
@@ -39,6 +43,11 @@ impl PixelFormat {
             PixelFormat::Yuv420p10le => 65535.0 / 1023.0,
             _ => 1.0,
         }
+    }
+
+    /// Vrai si l'image n'existe que sur le GPU.
+    pub fn is_gpu_surface(self) -> bool {
+        matches!(self, PixelFormat::D3d11)
     }
 
     /// Vrai si la chroma est entrelacée dans un seul plan (NV12 / P010).

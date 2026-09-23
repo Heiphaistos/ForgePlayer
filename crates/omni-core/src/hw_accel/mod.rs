@@ -27,6 +27,19 @@ use ffmpeg_next as ffmpeg;
 use ffmpeg_next::ffi;
 use std::ptr;
 
+/// Incrémente le compteur de références COM d'un pointeur brut.
+#[cfg(windows)]
+fn windows_add_ref(ptr: *mut std::ffi::c_void) {
+    // Disposition COM : le premier pointeur de l'objet est sa table de
+    // méthodes, dont la deuxième entrée est AddRef.
+    unsafe {
+        type AddRefFn = unsafe extern "system" fn(*mut std::ffi::c_void) -> u32;
+        let vtable = *(ptr as *const *const *const std::ffi::c_void);
+        let add_ref: AddRefFn = std::mem::transmute(*vtable.add(1));
+        add_ref(ptr);
+    }
+}
+
 pub struct HwAccelContext {
     pub kind:   HwKind,
     device_ref: *mut ffi::AVBufferRef,
@@ -53,7 +66,43 @@ pub enum HwKind {
     None,
 }
 
+/// Début de `AVD3D11VADeviceContext` (hwcontext_d3d11va.h). Seul le premier
+/// champ nous intéresse : l'appareil D3D11 que FFmpeg doit utiliser au lieu
+/// d'en ouvrir un à lui.
+#[repr(C)]
+struct AvD3d11VaDeviceContextHead {
+    device:         *mut std::ffi::c_void,
+    device_context: *mut std::ffi::c_void,
+}
+
 impl HwAccelContext {
+    /// Construit un contexte D3D11VA autour d'un appareil DÉJÀ créé, celui du
+    /// rendu. C'est la condition du partage sans copie : une texture ne se
+    /// partage qu'entre appareils du même adaptateur.
+    #[cfg(windows)]
+    pub fn from_existing_d3d11(device: *mut std::ffi::c_void) -> anyhow::Result<Self> {
+        if device.is_null() { anyhow::bail!("appareil D3D11 nul"); }
+        unsafe {
+            let device_ref = ffi::av_hwdevice_ctx_alloc(ffi::AVHWDeviceType::AV_HWDEVICE_TYPE_D3D11VA);
+            if device_ref.is_null() { anyhow::bail!("av_hwdevice_ctx_alloc a échoué"); }
+
+            let dctx = (*device_ref).data as *mut ffi::AVHWDeviceContext;
+            let hwctx = (*dctx).hwctx as *mut AvD3d11VaDeviceContextHead;
+            // FFmpeg libère cette référence à la destruction du contexte : on
+            // lui en donne une à lui (AddRef) et on garde la nôtre.
+            windows_add_ref(device);
+            (*hwctx).device = device;
+
+            let ret = ffi::av_hwdevice_ctx_init(device_ref);
+            if ret < 0 {
+                ffi::av_buffer_unref(&mut (device_ref as *mut _));
+                anyhow::bail!("av_hwdevice_ctx_init (appareil fourni) a échoué (code {ret})");
+            }
+            log::info!("HW accel initialisé: D3D11Va (appareil du rendu, partage sans copie)");
+            Ok(Self { kind: HwKind::D3D11Va, device_ref })
+        }
+    }
+
     /// Tente d'initialiser l'accélérateur nommé. Noms acceptés: "dxva2",
     /// "d3d11va" — tout le reste (dont "none"/inconnu) retourne un contexte
     /// `HwKind::None` inoffensif, jamais d'erreur. Seul un VRAI échec de

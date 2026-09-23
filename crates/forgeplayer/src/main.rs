@@ -39,6 +39,21 @@ fn main() -> Result<()> {
         renderer: eframe::Renderer::Wgpu,
         wgpu_options: egui_wgpu::WgpuConfiguration {
             wgpu_setup: egui_wgpu::WgpuSetup::CreateNew(egui_wgpu::WgpuSetupCreateNew {
+                // DX12 d'abord sous Windows : c'est le seul backend par lequel
+                // une texture décodée par D3D11 peut être partagée avec le
+                // rendu sans repasser par la mémoire centrale. Vulkan reste
+                // possible en repli (et reste le choix sur les autres systèmes).
+                instance_descriptor: wgpu::InstanceDescriptor {
+                    // `FORGEPLAYER_BACKEND=vulkan` force l'ancien chemin, pour
+                    // comparer ou contourner un pilote DX12 défaillant.
+                    backends: match std::env::var("FORGEPLAYER_BACKEND").as_deref() {
+                        Ok("vulkan") => wgpu::Backends::VULKAN,
+                        Ok("dx12")   => wgpu::Backends::DX12,
+                        _ if cfg!(windows) => wgpu::Backends::DX12,
+                        _ => wgpu::Backends::PRIMARY,
+                    },
+                    ..Default::default()
+                },
                 device_descriptor: Arc::new(|adapter| {
                     // 16-bit non-normalisé : nécessaire pour l'upload direct des
                     // textures YUV 10-bit HDR sans passer par une texture entière

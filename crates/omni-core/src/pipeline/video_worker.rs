@@ -66,7 +66,9 @@ fn run(
     let mut n_frames_dropped = 0u64;
     log::debug!("DBGPROBE video_worker: démarré, décodeur initial présent={}", video_dec.is_some());
 
+    let mut cpu_probe = crate::cpu_probe::CpuProbe::new("decodage video");
     for msg in msg_rx {
+        cpu_probe.tick();
         match msg {
             VideoWorkerMsg::Reset { decoder, skip_until } => {
                 log::debug!("DBGPROBE video_worker: Reset décodeur présent={}", decoder.is_some());

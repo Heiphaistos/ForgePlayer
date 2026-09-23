@@ -62,6 +62,7 @@ pub struct ForgeApp {
     paused_preview:    bool,   // seek en pause : afficher la frame preview à venir
     dbg_start:         Option<std::time::Instant>,
     dbg_last_log:      f64,
+    cpu_probe:         omni_core::cpu_probe::CpuProbe,
 }
 
 /// Caractères interdits dans un nom de fichier Windows.
@@ -70,8 +71,15 @@ const INVALID_FILENAME_CHARS: &[char] = &['/', '\\', ':', '*', '?', '\"', '<', '
 impl ForgeApp {
     pub fn new(cc: &CreationContext, config: AppConfig, initial_file: Option<String>) -> Self {
         Self::apply_theme(&cc.egui_ctx);
+        let mut app_zero_copy = false;
+        let mut app_d3d11_device = 0usize;
 
         if let Some(rs) = cc.wgpu_render_state.as_ref() {
+            let info = rs.adapter.get_info();
+            log::info!(
+                "rendu : backend {:?}, adaptateur « {} » ({:?})",
+                info.backend, info.name, info.device_type
+            );
             let mut resources = rs.renderer.write();
             match VideoRenderer::new(&rs.device, rs.target_format) {
                 Ok(r)  => { resources.callback_resources.insert(r); }
@@ -89,6 +97,28 @@ impl ForgeApp {
                 omni_renderer::HdrTonemapper::new(&rs.device, rs.target_format)
             );
             resources.callback_resources.insert(crate::video_callback::HdrOffscreen::default());
+            resources.callback_resources.insert(
+                omni_renderer::RgbPassthrough::new(&rs.device, rs.target_format),
+            );
+            resources.callback_resources.insert(crate::video_callback::SnapshotPassthrough(
+                omni_renderer::RgbPassthrough::new(&rs.device, omni_renderer::SNAPSHOT_FORMAT),
+            ));
+            // Le partage sans copie n'existe que sur DX12 : sur tout autre
+            // backend le lecteur garde le rapatriement mémoire.
+            // Partage sans copie : uniquement sur DX12, et seulement si on
+            // arrive à ouvrir un appareil D3D11 sur le MÊME adaptateur.
+            if info.backend == wgpu::Backend::Dx12 {
+                match omni_renderer::zero_copy::create_d3d11_on_render_adapter(&rs.device) {
+                    Ok(dev) => {
+                        app_d3d11_device = dev.as_ptr() as usize;
+                        app_zero_copy = true;
+                        // L'appareil doit survivre au lecteur : on le laisse
+                        // vivre pour toute la durée du processus.
+                        std::mem::forget(dev);
+                    }
+                    Err(e) => log::warn!("zéro-copie indisponible ({e:#}) — rapatriement mémoire"),
+                }
+            }
         }
 
         let audio = AudioEngine::new()
@@ -135,9 +165,12 @@ impl ForgeApp {
             paused_preview: false,
             dbg_start: None,
             dbg_last_log: 0.0,
+            cpu_probe: omni_core::cpu_probe::CpuProbe::new("interface+rendu"),
         };
 
         // Restaure volume et vitesse de la session précédente
+        app.player.zero_copy = app_zero_copy;
+        app.player.d3d11_device = app_d3d11_device;
         app.player.volume = app.config.volume.clamp(0.0, 2.0);
         app.player.set_speed(app.config.playback_speed.clamp(0.25, 4.0));
 
@@ -786,6 +819,7 @@ impl eframe::App for ForgeApp {
             self.dbg_start = None;
             self.dbg_last_log = 0.0;
         }
+        self.cpu_probe.tick();
         self.ensure_image_texture(ctx);
         self.ensure_subtitle_bitmaps(ctx);
         self.collect_snapshot();
@@ -1004,9 +1038,23 @@ impl eframe::App for ForgeApp {
             settings::show(ctx, &mut self.show_settings, &mut self.config);
         }
 
-        // Repaint cadencé à ~60 fps max quand actif (évite over-polling)
+        // Cadence de redessin : celle du FILM, pas celle de l'écran. Redessiner
+        // 70 fois par seconde un film à 24 images par seconde fait trois fois le
+        // travail d'interface pour un résultat identique — c'est ce qui
+        // consommait le plus de processeur une fois le rendu sans copie en
+        // place. La barre de contrôle, l'OSD et le chargement gardent une
+        // cadence rapide, eux, parce qu'ils s'animent.
         if self.player.is_active() {
-            ctx.request_repaint_after(std::time::Duration::from_millis(14));
+            let animating = self.controls_visible(now)
+                || self.osd_text(now).is_some()
+                || matches!(self.player.state, PlayerState::Buffering(_) | PlayerState::Loading);
+            let fps = self.player.media_info.as_ref()
+                .and_then(|m| m.video.as_ref())
+                .map(|v| v.fps)
+                .filter(|f| *f > 1.0)
+                .unwrap_or(60.0);
+            let delay = if animating { 14 } else { (1000.0 / fps).round().clamp(14.0, 50.0) as u64 };
+            ctx.request_repaint_after(std::time::Duration::from_millis(delay));
         }
     }
 

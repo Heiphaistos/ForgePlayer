@@ -347,6 +347,7 @@ fn fill_ring(
     generation:   Arc<AtomicU64>,
     last_pts:     Arc<AtomicU64>,
 ) {
+    let mut cpu_probe = omni_core::cpu_probe::CpuProbe::new("audio");
     let mut resampler: Option<AudioResampler> = None;
 
     for (gen, frame) in rx {
@@ -354,6 +355,7 @@ fn fill_ring(
         if gen != generation.load(Ordering::Relaxed) { continue; }
 
         // PTS de fin du frame — sert d'horloge de lecture (playback_position)
+        cpu_probe.tick();
         let frame_dur = if frame.sample_rate > 0 && frame.channels > 0 {
             frame.samples.len() as f64
                 / (frame.sample_rate as f64 * frame.channels as f64)

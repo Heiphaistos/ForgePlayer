@@ -8,6 +8,27 @@ use omni_renderer::{HdrTonemapper, ToneMapParams, VideoRenderer, HDR_OFFSCREEN_F
 /// ce nouveau type plutôt qu'un deuxième `HdrTonemapper`.
 pub struct SnapshotTonemapper(pub HdrTonemapper);
 
+/// Même rôle pour le chemin SDR sans copie : l'image partagée est déjà en RGB.
+pub struct SnapshotPassthrough(pub omni_renderer::RgbPassthrough);
+
+/// Pont de partage D3D11 ↔ DX12, créé à la première image restée sur le GPU.
+/// `None` tant qu'aucune image n'est passée, ou si le partage a échoué (le
+/// lecteur retombe alors sur le rapatriement classique sans rien signaler à
+/// l'utilisateur).
+#[derive(Default)]
+pub struct ZeroCopyState {
+    #[cfg(windows)]
+    pub bridge: Option<omni_renderer::zero_copy::ZeroCopyBridge>,
+    /// Vrai si une tentative a déjà échoué : inutile de réessayer à chaque image.
+    pub failed: bool,
+    /// Image partagée prête pour la passe d'affichage.
+    pub ready:  bool,
+    /// Vue de la dernière image partagée, réutilisée par la capture d'écran.
+    pub view:   Option<wgpu::TextureView>,
+    /// Dimensions de cette image (la capture en a besoin).
+    pub size:   (u32, u32),
+}
+
 use eframe::{egui_wgpu, wgpu};
 
 pub type SharedFrame = Arc<Mutex<Option<DecodedVideoFrame>>>;
@@ -119,9 +140,59 @@ impl VideoPaintCallback {
             label: Some("snapshot_encoder"),
         });
 
-        if self.transfer != 0 {
-            // Chemin HDR : YUV → RGB encodé PQ hors écran, puis tone mapping
-            // vers la texture de capture. Exactement ce que voit l'écran.
+        // Chemin sans copie : l'image partagée sert de source, il n'y a pas de
+        // texture YUV à convertir.
+        let shared = resources.get::<ZeroCopyState>()
+            .filter(|z| z.ready)
+            .and_then(|z| z.view.clone());
+
+        if let Some(view_src) = shared {
+            if self.transfer != 0 {
+                let tm = resources.get_mut::<SnapshotTonemapper>()?;
+                tm.0.set_input_texture(device, &view_src);
+                tm.0.update_params(queue, &ToneMapParams {
+                    mode: self.tonemap_mode,
+                    max_luminance: self.max_luminance.max(1.0),
+                    exposure: 1.0,
+                    transfer: self.transfer,
+                });
+                let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("snapshot_zero_copy_hdr"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                tm.0.render(&mut rp.forget_lifetime());
+            } else {
+                let pass = resources.get_mut::<SnapshotPassthrough>()?;
+                pass.0.set_input(device, &view_src);
+                let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("snapshot_zero_copy_sdr"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                pass.0.render(&mut rp.forget_lifetime());
+            }
+        } else if self.transfer != 0 {
+            // Chemin HDR classique : YUV → RGB encodé PQ hors écran, puis tone
+            // mapping vers la texture de capture.
             let hdr_view = resources.get_mut::<HdrOffscreen>()
                 .map(|off| off.ensure(device, w, h).clone())?;
             resources.get::<VideoRenderer>()?.render_to_offscreen(&mut enc, &hdr_view);
@@ -184,6 +255,99 @@ impl VideoPaintCallback {
     }
 }
 
+impl VideoPaintCallback {
+    /// Traite une demande de capture d'écran si elle est en attente.
+    ///
+    /// Les passes d'affichage sont rejouées vers une texture hors écran puis
+    /// relues : l'image enregistrée est celle qui est vue, quel que soit le
+    /// chemin (partagé ou rapatrié).
+    fn run_snapshot_if_requested(
+        &self,
+        device: &wgpu::Device,
+        queue:  &wgpu::Queue,
+        resources: &mut egui_wgpu::CallbackResources,
+    ) {
+        if !self.snapshot.requested.swap(false, std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
+        let size = resources.get::<ZeroCopyState>()
+            .filter(|z| z.ready)
+            .map(|z| z.size)
+            .or_else(|| resources.get::<VideoRenderer>().and_then(|r| r.frame_size()));
+        let Some((w, h)) = size else {
+            log::warn!("capture d'image : dimensions inconnues");
+            return;
+        };
+        match self.capture(device, queue, resources, w, h) {
+            Some(pixels) => *self.snapshot.result.lock() = Some((w, h, pixels)),
+            None => log::warn!("capture d'image : lecture GPU impossible"),
+        }
+    }
+
+    /// Convertit l'image restée sur le GPU dans une texture partagée et branche
+    /// le shader qui la consomme. Renvoie faux si le partage n'est pas possible
+    /// — l'appelant repasse alors par le chemin classique.
+    #[cfg(windows)]
+    fn share_gpu_frame(
+        &self,
+        device: &wgpu::Device,
+        resources: &mut egui_wgpu::CallbackResources,
+        frame: &DecodedVideoFrame,
+    ) -> bool {
+        let Some(hw) = frame.hw_surface() else { return false };
+        if resources.get::<ZeroCopyState>().is_none() {
+            resources.insert(ZeroCopyState::default());
+        }
+
+        let (w, h) = (frame.width, frame.height);
+        {
+            let state = resources.get_mut::<ZeroCopyState>().expect("état zéro-copie");
+            if state.failed { return false; }
+            let rebuild = state.bridge.as_ref()
+                .map(|b| !b.matches(hw.device, w, h))
+                .unwrap_or(true);
+            if rebuild {
+                match omni_renderer::zero_copy::ZeroCopyBridge::new(device, hw.device, w, h) {
+                    Ok(b) => state.bridge = Some(b),
+                    Err(e) => {
+                        log::warn!("zéro-copie indisponible ({e:#}) — retour au rapatriement mémoire");
+                        state.failed = true;
+                        return false;
+                    }
+                }
+            }
+        }
+
+        let view = {
+            let state = resources.get_mut::<ZeroCopyState>().expect("état zéro-copie");
+            let Some(bridge) = state.bridge.as_mut() else { return false };
+            match bridge.convert(hw.texture, hw.array_index, self.transfer != 0, self.full_range) {
+                Ok(view) => view.clone(),
+                Err(e) => {
+                    log::warn!("conversion partagée échouée ({e:#}) — retour au rapatriement mémoire");
+                    state.failed = true;
+                    return false;
+                }
+            }
+        };
+
+        if self.transfer != 0 {
+            if let Some(tm) = resources.get_mut::<HdrTonemapper>() {
+                tm.set_input_texture(device, &view);
+            }
+        } else if let Some(pass) = resources.get_mut::<omni_renderer::RgbPassthrough>() {
+            pass.set_input(device, &view);
+        }
+
+        if let Some(state) = resources.get_mut::<ZeroCopyState>() {
+            state.ready = true;
+            state.view  = Some(view);
+            state.size  = (w, h);
+        }
+        true
+    }
+}
+
 impl egui_wgpu::CallbackTrait for VideoPaintCallback {
     fn prepare(
         &self,
@@ -194,12 +358,43 @@ impl egui_wgpu::CallbackTrait for VideoPaintCallback {
         resources: &mut egui_wgpu::CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
         let mut new_frame = false;
-        if let Some(renderer) = resources.get_mut::<VideoRenderer>() {
-            renderer.set_color_space(queue, self.color_space, self.full_range);
-            if let Some(frame) = self.frame.lock().take() {
-                renderer.upload_frame(device, queue, &frame);
-                new_frame = true;
+        let mut gpu_surface = false;
+        if let Some(frame) = self.frame.lock().take() {
+            #[cfg(windows)]
+            if frame.format.is_gpu_surface() {
+                gpu_surface = self.share_gpu_frame(device, resources, &frame);
+                new_frame = gpu_surface;
             }
+            if !gpu_surface {
+                if let Some(renderer) = resources.get_mut::<VideoRenderer>() {
+                    renderer.set_color_space(queue, self.color_space, self.full_range);
+                    renderer.upload_frame(device, queue, &frame);
+                    new_frame = true;
+                }
+            }
+        } else if let Some(renderer) = resources.get_mut::<VideoRenderer>() {
+            renderer.set_color_space(queue, self.color_space, self.full_range);
+        }
+
+        // Chemin sans copie : l'image est déjà en RGB dans une texture
+        // partagée. En HDR elle alimente directement le tone mapping ; en SDR
+        // elle est affichée telle quelle. Les passes YUV→RGB ne servent plus.
+        let zero_copy_ready = resources.get::<ZeroCopyState>().map(|z| z.ready).unwrap_or(false);
+        if zero_copy_ready {
+            if self.transfer != 0 {
+                if let Some(tm) = resources.get_mut::<HdrTonemapper>() {
+                    tm.update_params(queue, &ToneMapParams {
+                        mode: self.tonemap_mode,
+                        max_luminance: self.max_luminance.max(1.0),
+                        exposure: 1.0,
+                        transfer: self.transfer,
+                    });
+                }
+            }
+            // La capture d'écran doit rester possible : elle part de la même
+            // image partagée. On ne quitte donc qu'APRÈS l'avoir traitée.
+            self.run_snapshot_if_requested(device, queue, resources);
+            return vec![];
         }
 
         if self.transfer != 0 {
@@ -252,14 +447,7 @@ impl egui_wgpu::CallbackTrait for VideoPaintCallback {
         // que l'image enregistrée est celle qui est vue — tone mapping HDR,
         // matrice de couleur et plage comprises — sans refaire ces calculs sur
         // le processeur.
-        if self.snapshot.requested.swap(false, std::sync::atomic::Ordering::Relaxed) {
-            if let Some((w, h)) = resources.get::<VideoRenderer>().and_then(|r| r.frame_size()) {
-                match self.capture(device, queue, resources, w, h) {
-                    Some(pixels) => *self.snapshot.result.lock() = Some((w, h, pixels)),
-                    None => log::warn!("capture d'image : lecture GPU impossible"),
-                }
-            }
-        }
+        self.run_snapshot_if_requested(device, queue, resources);
 
         vec![]
     }
@@ -271,9 +459,14 @@ impl egui_wgpu::CallbackTrait for VideoPaintCallback {
         rp:   &mut wgpu::RenderPass<'static>,
         resources: &egui_wgpu::CallbackResources,
     ) {
+        let zero_copy = resources.get::<ZeroCopyState>().map(|z| z.ready).unwrap_or(false);
         if self.transfer != 0 {
             if let Some(tonemapper) = resources.get::<HdrTonemapper>() {
                 tonemapper.render(rp);
+            }
+        } else if zero_copy {
+            if let Some(pass) = resources.get::<omni_renderer::RgbPassthrough>() {
+                pass.render(rp);
             }
         } else if let Some(renderer) = resources.get::<VideoRenderer>() {
             renderer.render(rp);

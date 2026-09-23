@@ -313,6 +313,18 @@ Format par entrée : `[STATUT] Zone — description`. STATUT ∈ {FIXED, OPEN, T
 - [ ] Zéro-copie D3D11 ↔ wgpu (toujours « hw decode + copy-back »).
 
 
+### Zéro-copie D3D11 ↔ DX12 : parité processeur avec VLC (2026-09-23, demandé par Momo)
+
+- [FIXED] **Les images décodées repassaient par la mémoire centrale.** Rapatriement (`av_hwframe_transfer_data`), recopie en `Vec`, renvoi au GPU : trois traversées par image, ~25 ms de processeur par image 4K. La surface reste maintenant en mémoire vidéo ; un processeur vidéo D3D11 la convertit en RGB directement dans une texture **partagée** avec le rendu.
+- **Mesure, même fichier, même machine, même session** : ForgePlayer **50 % → 8 %** d'un cœur, mémoire **1,55 Go → 583 Mo**. VLC sur le même fichier : **7 %** et 1,55 Go. Par thread : décodage vidéo 19 % → 0,6 %, interface 16 % → 4 %.
+- **Piège 1 — mesurer le bon temps.** La première analyse imputait 15,4 ms par image au rapatriement, mesurées en temps ÉCOULÉ : l'essentiel était une attente de synchronisation GPU, pas du processeur. Une sonde par thread (`GetThreadTimes`, module `cpu_probe`) a donné la vraie répartition et changé la cible.
+- **Piège 2 — le mauvais GPU.** FFmpeg ouvrait son appareil D3D11 sur l'adaptateur par défaut (Intel intégré) pendant que le rendu travaillait sur la NVIDIA : `OpenSharedFence` répondait `E_INVALIDARG` (0x80070057). Correctif : créer l'appareil D3D11 sur l'adaptateur du rendu (recherche par LUID), l'ouvrir en mode multithread protégé, puis le confier à FFmpeg via `AVD3D11VADeviceContext.device` — structure non bindée par `ffmpeg-sys-next`, redéclarée en `#[repr(C)]`.
+- **Piège 3 — le sens du partage.** D3D12 ne sait pas prendre un mutex à clé : la ressource est donc créée côté D3D12 (`CreateCommittedResource` + `D3D12_HEAP_FLAG_SHARED`), puis ouverte en D3D11 (`OpenSharedResource1`). La synchronisation passe par une barrière partagée signalée par D3D11 et attendue par la file DX12.
+- **Piège 4 — la capture d'écran.** Le chemin sans copie quittait `prepare()` avant le bloc de capture : le raccourci ne produisait plus aucun fichier. La capture est maintenant traitée dans les deux chemins et repart de la texture partagée.
+- Backend DX12 par défaut sous Windows (`FORGEPLAYER_BACKEND=vulkan` pour forcer l'ancien). Repli automatique et silencieux sur le rapatriement si le partage échoue.
+- **Cadence de redessin alignée sur le film** : 70 redessins par seconde pour 24 images/s, c'était le premier poste de processeur une fois le partage en place (16 % → 4 %).
+- **Non-régression** : 8 fichiers relus (4K HDR10, 4K SDR 10 bits, 4K AV1 HDR, 2K, 1080p, 5.1 AC-3, ProRes 422, HLG), tous fluides. Partage actif sur six ; AV1 et ProRes gardent l'ancien chemin — AV1 passe tout de même de 14 % à 11 %. Capture d'image vérifiée (3840×2160, quantiles 0,126/0,531/1,000, conformes au chemin précédent).
+
 ## BILAN DE LA BOUCLE AUTONOME — nuit du 2026-09-22 au 2026-09-23
 
 **Point de départ** : « le lecteur avait des problèmes à lire tout ce qui est film 4K/2K, et en HDR tout était hyper éblouissant ». **Arrivée** : deux versions publiées (v1.6.0 puis v1.7.1), 25 commits, 24 itérations.

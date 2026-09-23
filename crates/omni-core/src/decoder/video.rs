@@ -4,8 +4,26 @@ use ffmpeg::software::scaling::{context::Context as SwsContext, flag::Flags};
 
 use super::PixelFormat;
 
+/// Référence vers une image restée en mémoire vidéo (D3D11).
+///
+/// La `Video` conservée à côté garde la texture vivante : tant que ce frame
+/// existe, FFmpeg ne recyclera pas la surface dans son pool.
+pub struct HwSurface {
+    /// `ID3D11Texture2D*` — pointeur opaque, résolu côté rendu.
+    pub texture:     *mut std::ffi::c_void,
+    /// Indice de l'image dans la texture-tableau du décodeur.
+    pub array_index: u32,
+    /// `ID3D11Device*` du décodeur, pour vérifier qu'on partage le bon appareil.
+    pub device:      *mut std::ffi::c_void,
+    _keep_alive: ffmpeg::util::frame::video::Video,
+}
+
+// Les pointeurs ne sont que des poignées COM : leur propriétaire est la frame
+// FFmpeg conservée juste à côté, elle-même `Send`. Le rendu ne les utilise que
+// depuis son propre thread, après réception par le canal.
+unsafe impl Send for HwSurface {}
+
 /// Frame vidéo décodée, prête à envoyer au renderer.
-#[derive(Clone)]
 pub struct DecodedVideoFrame {
     /// Timestamp de présentation en secondes.
     pub pts_secs:  f64,
@@ -16,11 +34,20 @@ pub struct DecodedVideoFrame {
     pub planes:    Vec<Vec<u8>>,
     /// Strides (bytes par ligne) par plan.
     pub strides:   Vec<usize>,
+    /// Renseigné à la place de `planes` quand l'image reste sur le GPU.
+    pub hw:        Option<HwSurface>,
+}
+
+impl DecodedVideoFrame {
+    pub fn hw_surface(&self) -> Option<&HwSurface> { self.hw.as_ref() }
 }
 
 /// Décodeur vidéo avec gestion du scaling/conversion de format.
 pub struct VideoDecoder {
     decoder:     ffmpeg::codec::decoder::Video,
+    /// Laisse les images sur le GPU au lieu de les rapatrier en mémoire
+    /// centrale. Activé par le pipeline quand le rendu sait les consommer.
+    zero_copy:   bool,
     scaler:      Option<SwsContext>,
     time_base:   f64,
     // Tracks source properties to detect mid-stream changes requiring scaler rebuild.
@@ -46,6 +73,7 @@ impl VideoDecoder {
             scaler_src_h:   0,
             scaler_src_fmt: None,
             scaler_target_fmt: None,
+            zero_copy: false,
             sw_frame: ffmpeg::util::frame::video::Video::empty(),
             prof_n: 0, prof_dl: 0.0, prof_ex: 0.0,
         })
@@ -72,6 +100,9 @@ impl VideoDecoder {
     }
 
     /// Envoie un paquet compressé au décodeur.
+    /// Active le chemin sans copie (l'image reste en mémoire vidéo).
+    pub fn set_zero_copy(&mut self, on: bool) { self.zero_copy = on; }
+
     pub fn send_packet(&mut self, packet: &ffmpeg::Packet) -> Result<()> {
         self.decoder
             .send_packet(packet)
@@ -112,6 +143,36 @@ impl VideoDecoder {
             ffmpeg::util::frame::video::Video::empty(),
         );
         let is_hw = is_hw_format(raw.format());
+
+        // Chemin sans copie : on transmet la surface telle quelle. Rien ne
+        // traverse la mémoire centrale, ni au rapatriement ni à l'envoi.
+        if is_hw && self.zero_copy && raw.format() == ffmpeg::format::Pixel::D3D11 {
+            self.sw_frame = sw;
+            let texture = unsafe { (*raw.as_ptr()).data[0] as *mut std::ffi::c_void };
+            let array_index = unsafe { (*raw.as_ptr()).data[1] as usize as u32 };
+            let device = unsafe {
+                let frames = (*raw.as_ptr()).hw_frames_ctx;
+                if frames.is_null() { std::ptr::null_mut() } else {
+                    let fctx = (*frames).data as *const ffmpeg::ffi::AVHWFramesContext;
+                    let dev_ref = (*fctx).device_ref;
+                    if dev_ref.is_null() { std::ptr::null_mut() } else {
+                        let dctx = (*dev_ref).data as *const ffmpeg::ffi::AVHWDeviceContext;
+                        // Premier champ de AVD3D11VADeviceContext : ID3D11Device*.
+                        *((*dctx).hwctx as *const *mut std::ffi::c_void)
+                    }
+                }
+            };
+            return Ok(Some(DecodedVideoFrame {
+                pts_secs,
+                width:  raw.width(),
+                height: raw.height(),
+                format: PixelFormat::D3d11,
+                planes:  Vec::new(),
+                strides: Vec::new(),
+                hw: Some(HwSurface { texture, array_index, device, _keep_alive: raw }),
+            }));
+        }
+
         if is_hw {
             if let Err(e) = download_hw_frame_into(&mut sw, &raw) {
                 log::warn!("téléchargement frame GPU échoué, frame ignorée: {e:#}");
@@ -181,6 +242,7 @@ impl VideoDecoder {
         }
 
         let out = DecodedVideoFrame {
+            hw: None,
             pts_secs,
             width:   frame.width(),
             height:  frame.height(),

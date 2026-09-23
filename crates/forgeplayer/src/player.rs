@@ -58,6 +58,10 @@ pub struct Player {
     /// "auto"/"d3d11va"/"dxva2"/"none" — copié depuis AppConfig.hw_accel avant
     /// chaque open(); lu par le thread pipeline à l'ouverture du fichier.
     pub hw_accel_pref:    String,
+    /// Laisser les images sur le GPU (exige le backend DX12 côté rendu).
+    pub zero_copy:        bool,
+    /// `ID3D11Device*` du rendu, partagé avec le décodeur (0 = aucun).
+    pub d3d11_device:     usize,
     /// Avis non-fatal du pipeline (ex: piste audio illisible) — consommé une
     /// fois par l'UI via `.take()` pour l'afficher en OSD.
     pub pending_warning:  Option<String>,
@@ -93,6 +97,8 @@ impl Player {
             audio_flush_needed: false,
             clock_audio_master: false,
             hw_accel_pref:    "auto".into(),
+            zero_copy:        false,
+            d3d11_device:     0,
             pending_warning:  None,
             input_ended:      false,
             input_ended_at:   None,
@@ -123,7 +129,8 @@ impl Player {
             return self.open_image(path);
         }
 
-        self.pipeline = Some(MediaPipeline::launch(path.to_string(), self.hw_accel_pref.clone())?);
+        self.pipeline = Some(MediaPipeline::launch(
+            path.to_string(), self.hw_accel_pref.clone(), self.zero_copy, self.d3d11_device)?);
         Ok(())
     }
 

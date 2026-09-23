@@ -1,6 +1,7 @@
 pub mod decoder;
 pub mod hw_accel;
 pub mod pipeline;
+pub mod cpu_probe;
 pub mod probe;
 
 pub use decoder::{DecodedAudioFrame, DecodedVideoFrame};

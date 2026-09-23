@@ -63,7 +63,12 @@ pub struct MediaPipeline {
 impl MediaPipeline {
     /// Lance le pipeline de décodage dans des threads dédiés.
     /// `hw_accel_pref` : "auto"/"d3d11va"/"dxva2"/"none" (réglage Paramètres).
-    pub fn launch(path: String, hw_accel_pref: String) -> Result<Self> {
+    pub fn launch(
+        path: String,
+        hw_accel_pref: String,
+        zero_copy: bool,
+        d3d11_device: usize,
+    ) -> Result<Self> {
         let (cmd_tx, cmd_rx)         = bounded::<PipelineCommand>(16);
         let (event_tx, event_rx)     = bounded::<PipelineEvent>(64);
         let (video_tx, video_rx)     = bounded::<DecodedVideoFrame>(VIDEO_QUEUE_DEPTH);
@@ -75,7 +80,8 @@ impl MediaPipeline {
             .name("omni-demuxer".into())
             .spawn(move || {
                 if let Err(e) = demuxer::run_demuxer(
-                    &path_clone, &hw_accel_pref, cmd_rx, event_tx, video_tx, audio_tx,
+                    &path_clone, &hw_accel_pref, zero_copy, d3d11_device,
+                    cmd_rx, event_tx, video_tx, audio_tx,
                 ) {
                     log::error!("demuxer: {e:#}");
                     // Remonte l'erreur à l'UI — sinon le player reste bloqué en Playing

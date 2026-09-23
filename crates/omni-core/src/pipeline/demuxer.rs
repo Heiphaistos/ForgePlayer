@@ -20,6 +20,8 @@ const VIDEO_PKT_QUEUE_DEPTH: usize = 64;
 pub fn run_demuxer(
     path:          &str,
     hw_accel_pref: &str,
+    zero_copy:     bool,
+    d3d11_device:  usize,
     cmd_rx:        Receiver<PipelineCommand>,
     event_tx:      Sender<PipelineEvent>,
     video_tx:      Sender<DecodedVideoFrame>,
@@ -59,7 +61,7 @@ pub fn run_demuxer(
         }
     };
 
-    let mut ctx = DecodeContext::open(path, preferred_hw)?;
+    let mut ctx = DecodeContext::open_with_device(path, preferred_hw, d3d11_device as *mut _)?;
 
     // Indexe tous les flux audio disponibles pour le changement de piste
     let all_audio_idx: Vec<usize> = ctx.format_ctx
@@ -89,7 +91,7 @@ pub fn run_demuxer(
         })
     }).unwrap_or(0.0);
 
-    let initial_video_dec = v_idx
+    let mut initial_video_dec = v_idx
         .map(|_| ctx.build_video_decoder().map(|d| VideoDecoder::new(d, v_tb)))
         .transpose()?
         .and_then(|r| r.ok());
@@ -102,6 +104,7 @@ pub fn run_demuxer(
     // reste local à CE thread : la preview post-seek-en-pause décode directement
     // depuis ctx.format_ctx dans une boucle autonome bornée, indépendante du flux
     // principal de paquets envoyés au worker.
+    if let Some(dec) = initial_video_dec.as_mut() { dec.set_zero_copy(zero_copy); }
     let (video_pkt_tx, video_pkt_rx) = bounded::<VideoWorkerMsg>(VIDEO_PKT_QUEUE_DEPTH);
     let (eof_ack_tx, eof_ack_rx)     = bounded::<()>(1);
     let _video_worker = video_worker::spawn(
@@ -149,6 +152,7 @@ pub fn run_demuxer(
         }
     }
 
+    let mut cpu_probe = crate::cpu_probe::CpuProbe::new("demultiplexeur+audio");
     let mut paused = false;
     // Après un seek en pause : décoder une frame vidéo pour rafraîchir l'affichage
     let mut preview_after_seek = false;
@@ -189,7 +193,8 @@ pub fn run_demuxer(
                     // send_eof/drain — l'ancien est simplement jeté par le worker).
                     let new_video_dec = v_idx
                         .and_then(|_| ctx.build_video_decoder().ok())
-                        .and_then(|d| VideoDecoder::new(d, v_tb).ok());
+                        .and_then(|d| VideoDecoder::new(d, v_tb).ok())
+                        .map(|mut d| { d.set_zero_copy(zero_copy); d });
                     let _ = video_pkt_tx.send(VideoWorkerMsg::Reset {
                         decoder: new_video_dec, skip_until: Some(pos),
                     });
@@ -293,6 +298,8 @@ pub fn run_demuxer(
             }
             continue;
         }
+
+        cpu_probe.tick();
 
         // Régulation du débit : queues aval pleines = on attend au lieu de lire tout
         // le fichier en avance (sinon drops massifs de frames vidéo et overflow du ring

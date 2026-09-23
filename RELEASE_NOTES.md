@@ -2,6 +2,37 @@
 
 ---
 
+## v1.8.0 (2026-09-23) — Lecture 4K HDR sans copie : au niveau de VLC
+
+### Le changement
+
+Les images décodées par le GPU ne repassent plus par la mémoire centrale. Jusqu'ici chaque image 4K faisait trois traversées de bus — rapatriement en RAM, recopie dans des tampons, renvoi au GPU — pour environ 25 ms de processeur par image. Désormais la surface reste en mémoire vidéo : un processeur vidéo D3D11 la convertit en RGB directement dans une texture **partagée** avec le rendu, que le shader échantillonne telle quelle.
+
+**Mesure, même fichier 4K HDR10, même machine, même session :**
+
+| | processeur | mémoire |
+|---|---|---|
+| ForgePlayer v1.7.1 | 50 % d'un cœur | 1,55 Go |
+| **ForgePlayer v1.8.0** | **8 % d'un cœur** | **583 Mo** |
+| VLC 3 | 7 % d'un cœur | 1,55 Go |
+
+Détail par thread : le décodage vidéo passe de 19 % à 0,6 % d'un cœur, l'interface de 16 % à 4 %.
+
+### Ce qu'il a fallu pour y arriver
+
+- **Backend DX12** sous Windows (Vulkan reste disponible via `FORGEPLAYER_BACKEND=vulkan`) : c'est le seul par lequel une texture D3D11 se partage sans copie.
+- **Appareil D3D11 créé sur l'adaptateur du rendu**, puis confié à FFmpeg. Sans cela, FFmpeg ouvre son propre appareil sur le GPU intégré pendant que le rendu travaille sur la carte dédiée, et le partage échoue — c'est exactement l'erreur rencontrée en cours de route.
+- **Barrière de synchronisation partagée** entre les deux API : D3D11 la signale après la conversion, la file DX12 l'attend avant de dessiner.
+- **Cadence de redessin alignée sur le film** : redessiner 70 fois par seconde un film à 24 images par seconde triplait le travail d'interface pour un résultat identique.
+- Repli automatique et silencieux sur l'ancien chemin si le partage échoue (pilote, autre backend, décodage logiciel).
+
+### Vérifications
+
+- 8 fichiers relus sans anomalie : 4K HDR10 HEVC, 4K SDR 10 bits, 4K AV1 HDR, 2K, 1080p, 5.1 AC-3, ProRes 422 10 bits, HLG. Le partage s'active sur six d'entre eux ; AV1 et ProRes gardent l'ancien chemin (leur décodage ne produit pas de surface D3D11 ici) et restent fluides — AV1 passe même de 14 % à 11 % de processeur.
+- Capture d'image, sous-titres image, plage complète, tone mapping HDR : tous vérifiés sur le nouveau chemin.
+
+---
+
 ## v1.7.1 (2026-09-23) — Moins de processeur, moins de mémoire, son multicanal sans saturation
 
 ### Corrections

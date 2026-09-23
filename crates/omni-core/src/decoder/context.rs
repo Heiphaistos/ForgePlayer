@@ -54,6 +54,16 @@ pub(crate) fn network_options() -> ffmpeg::Dictionary<'static> {
 impl DecodeContext {
     /// Ouvre un fichier local ou une URL réseau (HTTP/RTSP/RTMP/HLS).
     pub fn open(path: &str, preferred_hw: Option<&str>) -> Result<Self> {
+        Self::open_with_device(path, preferred_hw, std::ptr::null_mut())
+    }
+
+    /// Variante qui réutilise un appareil D3D11 existant (celui du rendu) pour
+    /// permettre le partage des surfaces sans copie.
+    pub fn open_with_device(
+        path: &str,
+        preferred_hw: Option<&str>,
+        d3d11_device: *mut std::ffi::c_void,
+    ) -> Result<Self> {
         ffmpeg::init().context("ffmpeg::init")?;
 
         let format_ctx = if is_network_url(path) {
@@ -79,8 +89,22 @@ impl DecodeContext {
             .best(ffmpeg::media::Type::Subtitle)
             .map(|s| s.index());
 
-        let hw_accel = preferred_hw
-            .and_then(|name| HwAccelContext::try_init(name).ok());
+        let hw_accel = if !d3d11_device.is_null() {
+            #[cfg(windows)]
+            {
+                match HwAccelContext::from_existing_d3d11(d3d11_device) {
+                    Ok(ctx) => Some(ctx),
+                    Err(e) => {
+                        log::warn!("appareil D3D11 partagé refusé ({e:#}) — appareil séparé");
+                        preferred_hw.and_then(|name| HwAccelContext::try_init(name).ok())
+                    }
+                }
+            }
+            #[cfg(not(windows))]
+            { preferred_hw.and_then(|name| HwAccelContext::try_init(name).ok()) }
+        } else {
+            preferred_hw.and_then(|name| HwAccelContext::try_init(name).ok())
+        };
 
         Ok(Self {
             format_ctx,
