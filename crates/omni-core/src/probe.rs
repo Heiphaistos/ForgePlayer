@@ -24,6 +24,10 @@ pub struct VideoStreamInfo {
     pub fps:        f64,
     pub bit_rate:   i64,
     pub hdr:        bool,
+    /// Vrai si les échantillons couvrent toute la plage 0-255 (JPEG/PC) au
+    /// lieu de la plage limitée 16-235 (MPEG/TV). Décoder du full range avec
+    /// les offsets du limited range délave l'image (noirs gris, blancs gris).
+    pub full_range: bool,
     /// Pic de luminance réel du contenu en nits, lu dans les métadonnées HDR10
     /// du flux (MaxCLL, sinon la luminance max de l'écran de mastering).
     /// `None` = aucune métadonnée, l'appelant retombe sur sa valeur de config.
@@ -98,6 +102,7 @@ pub fn probe_file(path: &Path) -> Result<MediaInfo> {
 
                     // Détection HDR via color space / color transfer
                     let color_space = format!("{:?}", dec.color_space());
+                    let full_range = dec.color_range() == ffmpeg::color::Range::JPEG;
                     let transfer = match dec.color_transfer_characteristic() {
                         ffmpeg::color::TransferCharacteristic::SMPTE2084   => 1u8,
                         ffmpeg::color::TransferCharacteristic::ARIB_STD_B67 => 2u8,
@@ -114,6 +119,7 @@ pub fn probe_file(path: &Path) -> Result<MediaInfo> {
                         fps:        fps_f,
                         bit_rate:   dec.bit_rate() as i64,
                         hdr,
+                        full_range,
                         peak_nits,
                         transfer,
                         color_space,

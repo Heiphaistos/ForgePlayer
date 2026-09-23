@@ -142,6 +142,7 @@ impl Player {
                 fps:         0.0,
                 bit_rate:    file_size as i64,
                 hdr:         false,
+                full_range:  false,
                 peak_nits:   None,
                 transfer:    0,
                 color_space: "sRGB".to_string(),

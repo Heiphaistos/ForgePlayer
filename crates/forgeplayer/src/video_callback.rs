@@ -43,6 +43,8 @@ impl HdrOffscreen {
 pub struct VideoPaintCallback {
     pub frame:         SharedFrame,
     pub color_space:   u32,   // 0=BT601, 1=BT709, 2=BT2020
+    /// Plage des échantillons : complète (JPEG/PC) ou limitée (MPEG/TV).
+    pub full_range:    bool,
     /// Fonction de transfert du flux : 0 = SDR (rendu direct), 1 = PQ,
     /// 2 = HLG (rendu en deux passes avec tone mapping). Vient des métadonnées
     /// du flux, jamais de la profondeur de bits — un flux 10-bit BT.709 est du
@@ -62,7 +64,7 @@ impl egui_wgpu::CallbackTrait for VideoPaintCallback {
         resources: &mut egui_wgpu::CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
         if let Some(renderer) = resources.get_mut::<VideoRenderer>() {
-            renderer.set_color_space(queue, self.color_space);
+            renderer.set_color_space(queue, self.color_space, self.full_range);
             if let Some(frame) = self.frame.lock().take() {
                 renderer.upload_frame(device, queue, &frame);
             }

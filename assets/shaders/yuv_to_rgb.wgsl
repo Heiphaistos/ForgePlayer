@@ -49,9 +49,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         v_raw = textureSample(v_tex, samp, in.tex_coord).r;
     }
 
-    // Subtract limited-range offsets. The matrix handles Y/UV scaling.
-    // Y ∈ [16/255, 235/255], UV ∈ [16/255, 240/255] centred at 128/255.
-    let y = y_raw - 16.0 / 255.0;
+    // `color.offset.y` porte l'offset de luma : 16/255 en plage limitée
+    // (MPEG/TV), 0 en plage complète (JPEG/PC). La chroma est centrée sur
+    // 128/255 dans les deux cas. Les facteurs d'échelle sont dans la matrice.
+    let y = y_raw - color.offset.y;
     let u = u_raw - 128.0 / 255.0;
     let v = v_raw - 128.0 / 255.0;
 

@@ -36,6 +36,8 @@ pub struct ForgeApp {
     /// bits — un flux 10-bit BT.709 est du SDR et ne doit PAS passer par le
     /// tone mapping (sinon l'image ressort brûlée).
     video_transfer:    u32,
+    /// Vrai si le flux courant est en plage complète (JPEG/PC).
+    video_full_range:  bool,
     /// Pic de luminance annoncé par le fichier (nits), s'il en annonce un.
     video_peak_nits:   Option<f32>,
     osd:               Option<Osd>,
@@ -97,6 +99,7 @@ impl ForgeApp {
             playlist_items: Vec::new(), playlist_idx: None, seek_request: None,
             video_frame: Arc::new(Mutex::new(None)),
             video_transfer: 0,
+            video_full_range: false,
             video_peak_nits: None,
             osd: initial_osd, services,
             last_mouse_move: 0.0,
@@ -157,6 +160,7 @@ impl ForgeApp {
         log::info!("ouverture: {path}");
         *self.video_frame.lock() = None;
         self.video_transfer = 0;
+        self.video_full_range = false;
         self.video_peak_nits = None;
         self.pending_video_frame = None;
         self.config.add_recent(&path);
@@ -661,6 +665,7 @@ impl eframe::App for ForgeApp {
             // un master 4000 nits tone mappé comme du 1000 nits écrase ses
             // hautes lumières, un master 600 nits en laisse passer trop.
             self.video_peak_nits = info.video.as_ref().and_then(|v| v.peak_nits);
+            self.video_full_range = info.video.as_ref().map(|v| v.full_range).unwrap_or(false);
         }
 
         // Titre fenêtre dynamique
@@ -771,6 +776,7 @@ impl eframe::App for ForgeApp {
                     &mut self.image_viewer,
                     &self.config.aspect_mode,
                     self.video_color_space,
+                    self.video_full_range,
                     self.video_transfer,
                     self.config.tonemap_mode,
                     self.video_peak_nits.unwrap_or(self.config.max_luminance),

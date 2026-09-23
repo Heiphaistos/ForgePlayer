@@ -151,6 +151,18 @@ Format par entrée : `[STATUT] Zone — description`. STATUT ∈ {FIXED, OPEN, T
 - Les liserés verts sur les fils et la bande pâle à droite sont **dans la source** (artefacts de la conversion zscale) : VLC affiche exactement les mêmes. Pas un défaut du lecteur.
 - Aucun changement de code nécessaire : la voie HLG écrite à l'itération 1 est correcte.
 
+### Plage de couleur complète (JPEG/PC) (2026-09-23, itération 5 de la boucle)
+
+- [FIXED] **Le shader supposait toujours la plage limitée** : offset de luma 16/255 et facteurs 255/219 (luma) / 255/224 (chroma) codés en dur dans les trois matrices. Un fichier full range (`color_range=pc`, courant en capture d'écran, webcam, GIF/MJPEG ré-encodé) voyait donc ses noirs écrasés et ses blancs écrêtés.
+- Les matrices ne sont plus écrites à la main : `ColorUniforms::from_coeffs(kr, kb, full_range)` les dérive des coefficients de luminance (BT.601 0,299/0,114 · BT.709 0,2126/0,0722 · BT.2020 0,2627/0,0593) et de la plage. L'offset de luma passe par `color.offset.y` (0 en full range, 16/255 en limited).
+- `color_range` est lu dans la sonde (`ffmpeg::color::Range::JPEG`) et suit jusqu'au shader.
+- **Mesure** : même image encodée deux fois, une en `pc` et une en `tv`. Quantiles de luminance (p5 / p50 / p75 / p95) :
+  - image source PNG (vérité terrain) : 0,153 / 0,338 / 0,480 / 0,798
+  - ForgePlayer sur le fichier **full range** : 0,139 / 0,322 / 0,463 / 0,738
+  - ForgePlayer sur le fichier **limited** : 0,139 / 0,322 / 0,463 / 0,738 (écart moyen entre les deux rendus : 0,0045)
+  - VLC sur le fichier **full range** : 0,085 / 0,334 / 0,538 / **1,000**
+- Les deux rendus de ForgePlayer sont identiques et collent à la source ; **VLC, lui, ignore le drapeau `pc`** sur ce fichier (noirs écrasés, hautes lumières écrêtées). Sur ce point précis le lecteur est plus juste que VLC.
+
 ### Reste à faire
 
 - [ ] Utiliser les métadonnées de mastering réelles (MaxCLL / master-display) comme pic de tone mapping, au lieu de la valeur figée `max_luminance` de la config.

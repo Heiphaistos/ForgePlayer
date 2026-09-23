@@ -27,6 +27,8 @@ pub struct VideoRenderer {
     /// une troisième texture (planaire) ou dans le canal G de la deuxième
     /// (semi-planaire NV12/P010).
     current_semi_planar: bool,
+    /// Vrai si le flux courant est en plage complète (JPEG/PC).
+    current_full_range: bool,
     /// Vrai si le device a accordé `TEXTURE_FORMAT_16BIT_NORM` — sinon le
     /// contenu HDR 10-bit est affiché en 8-bit (repli silencieux, pas pire
     /// qu'avant cette fonctionnalité, jamais un crash).
@@ -46,51 +48,48 @@ struct ColorUniforms {
 }
 
 impl ColorUniforms {
+    /// Construit la matrice YUV→RGB depuis les coefficients de luminance de
+    /// l'espace colorimétrique et la plage des échantillons.
+    ///
+    /// Plage limitée (MPEG/TV) : Y ∈ [16,235], chroma ∈ [16,240] — il faut
+    /// retirer l'offset 16 et ré-étendre (255/219 en luma, 255/224 en chroma).
+    /// Plage complète (JPEG/PC) : aucun offset de luma, aucune extension.
+    /// Appliquer les facteurs du limited range à du full range délave tout
+    /// (noirs gris, blancs écrêtés) — et inversement l'image sort trop
+    /// contrastée.
+    fn from_coeffs(kr: f32, kb: f32, full_range: bool) -> Self {
+        let kg = 1.0 - kr - kb;
+        let (y_scale, c_scale, y_offset) = if full_range {
+            (1.0, 1.0, 0.0)
+        } else {
+            (255.0 / 219.0, 255.0 / 224.0, 16.0 / 255.0)
+        };
+
+        let vr =  (2.0 - 2.0 * kr) * c_scale;
+        let ub =  (2.0 - 2.0 * kb) * c_scale;
+        let ug = -(kb / kg) * (2.0 - 2.0 * kb) * c_scale;
+        let vg = -(kr / kg) * (2.0 - 2.0 * kr) * c_scale;
+
+        Self {
+            // Colonnes : [Y], [U], [V], [1]
+            matrix: [
+                [y_scale, y_scale, y_scale, 0.0],
+                [0.0,     ug,      ub,      0.0],
+                [vr,      vg,      0.0,     0.0],
+                [0.0,     0.0,     0.0,     1.0],
+            ],
+            // offset.x = drapeau chroma semi-planaire, offset.y = offset de luma.
+            offset: [0.0, y_offset, 0.0, 0.0],
+        }
+    }
+
+    fn bt601(full: bool)  -> Self { Self::from_coeffs(0.299,  0.114,  full) }
+    fn bt709(full: bool)  -> Self { Self::from_coeffs(0.2126, 0.0722, full) }
+    fn bt2020(full: bool) -> Self { Self::from_coeffs(0.2627, 0.0593, full) }
+
     fn with_semi(mut self, semi: bool) -> Self {
         self.offset[0] = if semi { 1.0 } else { 0.0 };
         self
-    }
-
-    // BT.601 limited (contenu SD / DVD)
-    // R = 1.164*y + 1.596*v, G = 1.164*y - 0.392*u - 0.813*v, B = 1.164*y + 2.017*u
-    fn bt601() -> Self {
-        Self {
-            matrix: [
-                [1.164, 1.164, 1.164, 0.0],
-                [0.0, -0.392, 2.017, 0.0],
-                [1.596, -0.813, 0.0, 0.0],
-                [0.0, 0.0, 0.0, 1.0],
-            ],
-            offset: [0.0; 4],
-        }
-    }
-
-    // BT.709 limited (H.264/H.265, 1080p+)
-    // R = 1.164*y + 1.793*v, G = 1.164*y - 0.213*u - 0.533*v, B = 1.164*y + 2.112*u
-    fn bt709() -> Self {
-        Self {
-            matrix: [
-                [1.164, 1.164, 1.164, 0.0],
-                [0.0, -0.213, 2.112, 0.0],
-                [1.793, -0.533, 0.0, 0.0],
-                [0.0, 0.0, 0.0, 1.0],
-            ],
-            offset: [0.0; 4],
-        }
-    }
-
-    // BT.2020 limited (HDR / 4K UHD)
-    // R = 1.164*y + 1.678*v, G = 1.164*y - 0.187*u - 0.652*v, B = 1.164*y + 2.142*u
-    fn bt2020() -> Self {
-        Self {
-            matrix: [
-                [1.164, 1.164, 1.164, 0.0],
-                [0.0, -0.187, 2.142, 0.0],
-                [1.678, -0.652, 0.0, 0.0],
-                [0.0, 0.0, 0.0, 1.0],
-            ],
-            offset: [0.0; 4],
-        }
     }
 }
 
@@ -139,7 +138,7 @@ impl VideoRenderer {
             }],
         });
 
-        let uniforms    = ColorUniforms::bt709();
+        let uniforms    = ColorUniforms::bt709(false);
         let uniform_buf = device.create_buffer_init(&util::BufferInitDescriptor {
             label:    Some("color_uniform_buf"),
             contents: bytemuck::bytes_of(&uniforms),
@@ -207,22 +206,26 @@ impl VideoRenderer {
             uniform_bgl,
             current_color_space: 1,  // BT.709 par défaut
             current_semi_planar: false,
+            current_full_range: false,
             supports_16bit: device.features().contains(Features::TEXTURE_FORMAT_16BIT_NORM),
         })
     }
 
-    /// Met à jour l'espace colorimétrique (0=BT601, 1=BT709, 2=BT2020).
-    pub fn set_color_space(&mut self, queue: &Queue, cs: u32) {
-        if self.current_color_space == cs { return; }
+    /// Met à jour l'espace colorimétrique (0=BT601, 1=BT709, 2=BT2020) et la
+    /// plage des échantillons (limitée 16-235 ou complète 0-255).
+    pub fn set_color_space(&mut self, queue: &Queue, cs: u32, full_range: bool) {
+        if self.current_color_space == cs && self.current_full_range == full_range { return; }
         self.current_color_space = cs;
+        self.current_full_range  = full_range;
         self.write_uniforms(queue);
     }
 
     fn write_uniforms(&self, queue: &Queue) {
+        let full = self.current_full_range;
         let uniforms = match self.current_color_space {
-            0 => ColorUniforms::bt601(),
-            2 => ColorUniforms::bt2020(),
-            _ => ColorUniforms::bt709(),
+            0 => ColorUniforms::bt601(full),
+            2 => ColorUniforms::bt2020(full),
+            _ => ColorUniforms::bt709(full),
         }
         .with_semi(self.current_semi_planar);
         queue.write_buffer(&self.uniform_buf, 0, bytemuck::bytes_of(&uniforms));
