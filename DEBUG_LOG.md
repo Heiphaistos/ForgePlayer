@@ -325,6 +325,19 @@ Format par entrée : `[STATUT] Zone — description`. STATUT ∈ {FIXED, OPEN, T
 - **Cadence de redessin alignée sur le film** : 70 redessins par seconde pour 24 images/s, c'était le premier poste de processeur une fois le partage en place (16 % → 4 %).
 - **Non-régression** : 8 fichiers relus (4K HDR10, 4K SDR 10 bits, 4K AV1 HDR, 2K, 1080p, 5.1 AC-3, ProRes 422, HLG), tous fluides. Partage actif sur six ; AV1 et ProRes gardent l'ancien chemin — AV1 passe tout de même de 14 % à 11 %. Capture d'image vérifiée (3840×2160, quantiles 0,126/0,531/1,000, conformes au chemin précédent).
 
+## BOUCLE ARRÊTÉE le 2026-09-23 à 14:42 (échéance 14:00)
+
+La tâche planifiée a été supprimée, plus rien n'est programmé. Dernier état : **v1.8.0 en ligne**, 27 commits, tout poussé.
+
+**Écart de performance avec VLC : refermé.** Même fichier 4K HDR10, même machine, même session — ForgePlayer **8 % d'un cœur / 583 Mo**, VLC **7 % / 1,55 Go**. Au départ de la nuit : 80 % d'un cœur et 1,8 Go.
+
+**Ce qui reste ouvert, et pourquoi :**
+
+1. **Sortie surround réelle (5.1/7.1 sur enceintes)** — aucun périphérique surround sur cette machine. Le repli stéréo, lui, est corrigé (il saturait) et couvert par six tests unitaires.
+2. **Précision du saut sur fichier à GOP très long** — on se cale sur l'image clé, donc jusqu'à ~10 s avant la cible sur un encodage à images clés espacées de 10 s. Compromis assumé, identique à VLC et mpv ; l'alternative est un gel de plusieurs secondes.
+3. **AV1 et ProRes ne passent pas par le partage sans copie** — leur décodage ne produit pas de surface D3D11 ici. Ils gardent l'ancien chemin et restent fluides (AV1 est même passé de 14 % à 11 % de processeur).
+4. **VOBSUB et DVB** — même décodeur et même affichage que le PGS vérifié, mais aucun échantillon sous la main pour le prouver.
+
 ## BILAN DE LA BOUCLE AUTONOME — nuit du 2026-09-22 au 2026-09-23
 
 **Point de départ** : « le lecteur avait des problèmes à lire tout ce qui est film 4K/2K, et en HDR tout était hyper éblouissant ». **Arrivée** : deux versions publiées (v1.6.0 puis v1.7.1), 25 commits, 24 itérations.
