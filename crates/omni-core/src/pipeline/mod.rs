@@ -11,6 +11,8 @@ use crate::decoder::{DecodedAudioFrame, DecodedVideoFrame};
 /// Commandes envoyées au thread de pipeline.
 #[derive(Debug)]
 pub enum PipelineCommand {
+    /// Vitesse de lecture : le son est étiré par `atempo` (hauteur conservée).
+    SetSpeed(f32),
     Pause,
     Resume,
     Seek(f64),          // position en secondes

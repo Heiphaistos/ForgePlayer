@@ -473,6 +473,11 @@ impl Player {
 
     pub fn set_speed(&mut self, speed: f32) {
         self.clock.set_speed(speed);
+        // Le son doit suivre : sans ça seule l'image accélère et l'écart se
+        // creuse à chaque seconde.
+        if let Some(p) = &self.pipeline {
+            p.send_command(PipelineCommand::SetSpeed(speed));
+        }
     }
 
     pub fn speed(&self) -> f32 {

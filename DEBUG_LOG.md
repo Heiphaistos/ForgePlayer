@@ -243,6 +243,16 @@ Format par entrée : `[STATUT] Zone — description`. STATUT ∈ {FIXED, OPEN, T
 - Les positions proches du début ou de la fin (moins de 30 s de chaque côté) ne sont pas mémorisées : reprendre à 3 s ou dans le générique n'a aucun intérêt.
 - **Mesure** : lecture de `long_hdr_4k.mp4`, cinq sauts en avant, fermeture propre → `config.json` contient `("D:\Projet\ForgePlayer\.testmedia\long_hdr_4k.mp4", 55.755…)`. Réouverture : journal `reprise de lecture à 55.8 s`, et la barre affiche **1:15 / 5:30** quelques secondes plus tard (capture à l'appui) au lieu de repartir de zéro.
 
+### Vitesse de lecture : le son suit enfin (2026-09-23, itération 16 de la boucle)
+
+- [FIXED] **Régler la vitesse ne changeait rien quand le fichier avait du son.** `set_speed` ne touchait que l'horloge ; le son continuait à sortir à 1×, et comme c'est lui l'horloge de référence, la lecture restait à 1× — le badge affichait bien « 1,5× » mais rien n'accélérait. La limitation était même écrite dans `sync_clock_to_audio` (« l'audio jouera à 1×, désynchronisé »).
+- Le son passe maintenant par le filtre `atempo` de libavfilter (**durée modifiée, hauteur conservée**, comme VLC et mpv), enchaîné automatiquement au-delà de 2× ou en dessous de 0,5×. Les frames produites sont réhorodatées en temps MÉDIA, donc l'audio reste l'horloge de référence et l'image reste calée dessus.
+- Nouvelle commande de pipeline `SetSpeed`, entrées de menu *Lecture → Moins vite / Plus vite / Vitesse normale* (les raccourcis `[` et `]` existaient déjà).
+- **Mesure** (fichier 4K HDR avec son) :
+  - avant : à « 1,5× », `pos` avançait de 3,01 s pour 3,00 s de temps réel — soit **1,00×**, le réglage était inerte ;
+  - après, à 1,5× : `pos` passe de 159,68 s à 181,75 s pendant que le temps réel passe de 105,37 s à 120,44 s, soit **1,465×** (la montée en régime du filtre explique l'écart au 1,5 théorique), `audio_master=true` conservé, tampon audio entre 2,7 et 3,5 s ;
+  - retour à 1× : 3,00 s de média pour 3,01 s de temps réel.
+
 ### Reste à faire
 
 - [ ] Utiliser les métadonnées de mastering réelles (MaxCLL / master-display) comme pic de tone mapping, au lieu de la valeur figée `max_luminance` de la config.

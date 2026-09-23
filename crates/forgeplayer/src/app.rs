@@ -267,9 +267,9 @@ impl ForgeApp {
         let has_audio = self.player.media_info.as_ref()
             .map(|i| !i.audio.is_empty()).unwrap_or(false);
         if !has_audio { return; }
-        // Vitesse ≠ 1 : l'audio joue toujours à 1× (pas de time-stretch) — on
-        // laisse l'horloge murale piloter, l'audio sera désynchronisé (limitation).
-        if (self.player.speed() - 1.0).abs() > 0.01 { return; }
+        // Le son est étiré par `atempo` et ses frames restent horodatées en
+        // temps média : il reste donc l'horloge de référence quelle que soit
+        // la vitesse.
         let Some(audio) = &self.audio else { return };
         let Some(pos) = audio.playback_position() else {
             // Pas encore de données post-flush : on fige l'horloge sur la position
@@ -1097,6 +1097,24 @@ impl ForgeApp {
                 if ui.button("🎵  Piste audio  A").clicked()    { self.player.next_audio_track(); ui.close_menu(); }
                 if ui.button("💬  Sous-titres  S").clicked()    { self.player.next_subtitle_track(); ui.close_menu(); }
                 if ui.button("🔇  Muet  M").clicked()           { self.player.toggle_mute(); ui.close_menu(); }
+                ui.separator();
+                if ui.button("⏪  Moins vite  [").clicked() {
+                    let s = (self.player.speed() - 0.25).max(0.25);
+                    self.player.set_speed(s);
+                    self.set_osd(format!("Vitesse {s:.2}×"));
+                    ui.close_menu();
+                }
+                if ui.button("⏩  Plus vite  ]").clicked() {
+                    let s = (self.player.speed() + 0.25).min(4.0);
+                    self.player.set_speed(s);
+                    self.set_osd(format!("Vitesse {s:.2}×"));
+                    ui.close_menu();
+                }
+                if ui.button("1×  Vitesse normale").clicked() {
+                    self.player.set_speed(1.0);
+                    self.set_osd("Vitesse 1,00×");
+                    ui.close_menu();
+                }
             });
 
             ui.menu_button("Outils", |ui| {

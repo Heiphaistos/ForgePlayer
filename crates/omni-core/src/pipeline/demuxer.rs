@@ -207,6 +207,9 @@ pub fn run_demuxer(
                     first_audio_after_seek = true;
                     first_preview_after_seek = true;
                 }
+                PipelineCommand::SetSpeed(speed) => {
+                    if let Some(dec) = &mut audio_dec { dec.set_speed(speed); }
+                }
                 PipelineCommand::SelectAudioTrack(track) => {
                     if let Some(&new_idx) = all_audio_idx.get(track) {
                         // Flush et reconstruit le décodeur audio pour la nouvelle piste
