@@ -271,6 +271,13 @@ Format par entrée : `[STATUT] Zone — description`. STATUT ∈ {FIXED, OPEN, T
 - **Test du binaire packagé** (pas du build de développement) sur `pgs_test.mkv` : journal `ForgePlayer v1.7.0` puis `sous-titres : piste 0 activée automatiquement`, et la capture montre le sous-titre image incrusté sans qu'aucune touche n'ait été pressée.
 - Release publiée avec les deux artefacts : https://github.com/Heiphaistos/ForgePlayer/releases/tag/v1.7.0
 
+### Repli 5.1/7.1 vers la stéréo : fin de l'écrêtage (2026-09-23, itération 20 de la boucle)
+
+- [FIXED] **Le repli multicanal saturait.** La somme `FL + 0,707·FC + 0,707·BL` atteint **2,41** à pleine échelle et était simplement écrêtée à 1,0 : de la distorsion audible sur tout film 5.1 un peu fort, c'est-à-dire la quasi-totalité des films 4K. Le repli est maintenant **normalisé par le total des coefficients** (même méthode que le `rematrix` de FFmpeg et que VLC) : à pleine échelle la sortie vaut exactement 1,0, jamais plus.
+- Les coefficients sont désormais déclarés par disposition (5.1 = FL FR FC LFE BL BR, 7.1 = + SL SR) au lieu d'être recopiés à la main dans deux branches. Le caisson (LFE) reste hors du mélange, comme chez FFmpeg.
+- **6 tests unitaires** ajoutés (`cargo test -p omni-audio`, tous verts) : mono dupliqué, stéréo inchangée, 5.1 et 7.1 à pleine échelle qui donnent exactement 1,0 sans écrêtage, canal avant gauche seul qui laisse la droite muette (0,414 / 0,000), LFE ignoré, longueur de sortie.
+- **Lecture réelle** d'un fichier 5.1 AC-3 448 kb/s (six tonalités distinctes) : périphérique ouvert en stéréo, `audio_master=true`, tampon 2,5 s, cadence temps réel, aucune erreur.
+
 ### Reste à faire
 
 - [ ] Utiliser les métadonnées de mastering réelles (MaxCLL / master-display) comme pic de tone mapping, au lieu de la valeur figée `max_luminance` de la config.

@@ -414,41 +414,130 @@ fn fill_ring(
 
 // ─── Downmix N canaux → stéréo ───────────────────────────────────────────────
 
+/// Coefficients de mixage vers la stéréo, dans l'ordre des canaux de FFmpeg.
+///
+/// 5.1 = FL FR FC LFE BL BR, 7.1 = FL FR FC LFE BL BR SL SR. Le caisson (LFE)
+/// n'est pas mélangé, comme le fait FFmpeg par défaut : son contenu est déjà
+/// présent dans les autres canaux et l'ajouter ne fait que saturer.
+const COEFF_51: [(f32, f32); 6] = [
+    (1.0, 0.0), (0.0, 1.0), (0.707, 0.707), (0.0, 0.0), (0.707, 0.0), (0.0, 0.707),
+];
+const COEFF_71: [(f32, f32); 8] = [
+    (1.0, 0.0), (0.0, 1.0), (0.707, 0.707), (0.0, 0.0),
+    (0.5, 0.0), (0.0, 0.5), (0.707, 0.0), (0.0, 0.707),
+];
+
+/// Replie un frame multicanal en stéréo.
+///
+/// La somme est NORMALISÉE par le total des coefficients : sans ça, un passage
+/// fort en 5.1 dépasse largement 1,0 et se faisait simplement écrêter, ce qui
+/// s'entend comme de la distorsion sur tous les films multicanaux. C'est la
+/// même normalisation que celle de FFmpeg (`rematrix` avec `normalize`) et de
+/// VLC : le repli est plus discret qu'une piste stéréo d'origine, mais il ne
+/// sature jamais.
 fn downmix_to_stereo(samples: &[f32], in_ch: usize) -> Vec<f32> {
     if in_ch == 0 { return Vec::new(); }
     let frames = samples.len() / in_ch;
     let mut out = Vec::with_capacity(frames * 2);
 
+    let coeffs: Option<&[(f32, f32)]> = match in_ch {
+        6 => Some(&COEFF_51),
+        8 => Some(&COEFF_71),
+        _ => None,
+    };
+    // Facteur de normalisation : le canal le plus chargé ne peut plus dépasser 1.
+    let norm = coeffs.map(|c| {
+        let l: f32 = c.iter().map(|(a, _)| *a).sum();
+        let r: f32 = c.iter().map(|(_, b)| *b).sum();
+        1.0 / l.max(r).max(1.0)
+    }).unwrap_or(1.0);
+
     for f in 0..frames {
         let b = f * in_ch;
-        let (l, r) = match in_ch {
-            1 => { let m = samples[b]; (m, m) }
-            2 => (samples[b], samples[b + 1]),
-            6 => {
-                let (fl, fr, fc, bl, br) =
-                    (samples[b], samples[b+1], samples[b+2], samples[b+4], samples[b+5]);
-                ((fl + fc*0.707 + bl*0.707).clamp(-1.0, 1.0),
-                 (fr + fc*0.707 + br*0.707).clamp(-1.0, 1.0))
+        let (l, r) = match (in_ch, coeffs) {
+            (1, _) => { let m = samples[b]; (m, m) }
+            (2, _) => (samples[b], samples[b + 1]),
+            (_, Some(c)) => {
+                let mut l = 0.0;
+                let mut r = 0.0;
+                for (ch, (cl, cr)) in c.iter().enumerate() {
+                    l += samples[b + ch] * cl;
+                    r += samples[b + ch] * cr;
+                }
+                (l * norm, r * norm)
             }
-            8 => {
-                let (fl, fr, fc, bl, br, sl, sr) =
-                    (samples[b], samples[b+1], samples[b+2], samples[b+4],
-                     samples[b+5], samples[b+6], samples[b+7]);
-                ((fl + fc*0.707 + bl*0.5 + sl*0.707).clamp(-1.0, 1.0),
-                 (fr + fc*0.707 + br*0.5 + sr*0.707).clamp(-1.0, 1.0))
-            }
-            n => {
+            (n, None) => {
+                // Disposition inconnue : canaux pairs à gauche, impairs à droite.
                 let (mut ls, mut rs) = (0f32, 0f32);
                 for ch in 0..n {
                     if ch % 2 == 0 { ls += samples[b + ch]; }
                     else           { rs += samples[b + ch]; }
                 }
                 let h = (n / 2).max(1) as f32;
-                ((ls / h).clamp(-1.0, 1.0), (rs / h).clamp(-1.0, 1.0))
+                (ls / h, rs / h)
             }
         };
-        out.push(l);
-        out.push(r);
+        // Filet de sécurité : une source déjà saturée ne doit pas dépasser.
+        out.push(l.clamp(-1.0, 1.0));
+        out.push(r.clamp(-1.0, 1.0));
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::downmix_to_stereo;
+
+    #[test]
+    fn mono_est_duplique() {
+        assert_eq!(downmix_to_stereo(&[0.5, -0.25], 1), vec![0.5, 0.5, -0.25, -0.25]);
+    }
+
+    #[test]
+    fn stereo_passe_tel_quel() {
+        assert_eq!(downmix_to_stereo(&[0.5, -0.5], 2), vec![0.5, -0.5]);
+    }
+
+    #[test]
+    fn cinq_un_ne_sature_jamais() {
+        // Tous les canaux à fond : avant normalisation la somme valait 2,41.
+        let out = downmix_to_stereo(&[1.0; 6], 6);
+        assert_eq!(out.len(), 2);
+        for v in out {
+            assert!(v <= 1.0, "sortie {v} au-dessus de 1,0 : écrêtage");
+            assert!((v - 1.0).abs() < 1e-6, "sortie {v} : la pleine échelle doit donner 1,0");
+        }
+    }
+
+    #[test]
+    fn cinq_un_respecte_les_canaux() {
+        // Avant gauche seul → rien à droite.
+        let mut input = [0.0f32; 6];
+        input[0] = 1.0;
+        let out = downmix_to_stereo(&input, 6);
+        assert!(out[0] > 0.4 && out[0] < 0.42, "gauche = {}", out[0]);
+        assert_eq!(out[1], 0.0, "le canal droit doit rester muet");
+
+        // Le caisson (LFE) n'est pas mélangé.
+        let mut lfe = [0.0f32; 6];
+        lfe[3] = 1.0;
+        assert_eq!(downmix_to_stereo(&lfe, 6), vec![0.0, 0.0]);
+    }
+
+    #[test]
+    fn sept_un_ne_sature_jamais() {
+        let out = downmix_to_stereo(&[1.0; 8], 8);
+        for v in out {
+            assert!(v <= 1.0 + 1e-6, "sortie {v} au-dessus de 1,0");
+            assert!((v - 1.0).abs() < 1e-6, "sortie {v} : la pleine échelle doit donner 1,0");
+        }
+    }
+
+    #[test]
+    fn longueur_de_sortie() {
+        let frames = 5;
+        let out = downmix_to_stereo(&vec![0.1; frames * 6], 6);
+        assert_eq!(out.len(), frames * 2);
+    }
+}
+
