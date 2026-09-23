@@ -265,6 +265,12 @@ Format par entrée : `[STATUT] Zone — description`. STATUT ∈ {FIXED, OPEN, T
 - [TESTED-OK] Relecture de six fichiers après les changements des itérations 11 à 17 : `bbb_1080p_sdr.mp4` (1080p SDR), `sdr8_2k.mp4` (2K), `sdr10_4k.mp4` (4K 10 bits SDR), `av1_4k_hdr.mp4` (4K AV1 HDR), `pgs_test.mkv` (sous-titres image), `still_full.mp4` (plage complète). Tous en temps réel (`pos == wall` à ±50 ms), **aucune ligne ERROR ni panique**. Les fichiers sans piste audio affichent logiquement `audio_master=false`.
 - Version portée à **1.7.0** partout (`Cargo.toml` du workspace, `installer/ForgePlayer.iss`, lien du `README.md`), section v1.7.0 écrite dans `RELEASE_NOTES.md`. Binaire vérifié : journalise `ForgePlayer v1.7.0`.
 
+### Packaging et publication v1.7.0 (2026-09-23, itération 19 de la boucle)
+
+- `build.bat release x64`, binaires et installateur signés (certificat Heiphaistos), `ForgePlayer_v1.7.0_Portable.zip` (99,1 Mo) et `ForgePlayer_v1.7.0_Setup.exe` (67,4 Mo) produits, artefacts 1.6.0 retirés de `dist\`.
+- **Test du binaire packagé** (pas du build de développement) sur `pgs_test.mkv` : journal `ForgePlayer v1.7.0` puis `sous-titres : piste 0 activée automatiquement`, et la capture montre le sous-titre image incrusté sans qu'aucune touche n'ait été pressée.
+- Release publiée avec les deux artefacts : https://github.com/Heiphaistos/ForgePlayer/releases/tag/v1.7.0
+
 ### Reste à faire
 
 - [ ] Utiliser les métadonnées de mastering réelles (MaxCLL / master-display) comme pic de tone mapping, au lieu de la valeur figée `max_luminance` de la config.
