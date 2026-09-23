@@ -292,6 +292,13 @@ Format par entrée : `[STATUT] Zone — description`. STATUT ∈ {FIXED, OPEN, T
 - **Mesure sur le même fichier 4K HDR** : **59 % → 50 % d'un cœur** (19,9 s de processeur pour 40 s de lecture). Cumulé avec l'itération précédente : **80 % → 50 %**.
 - Vérifié qu'aucune fluidité n'est perdue : 960 paquets, 960 images décodées, **0 perdue**, `pos == wall` à ±10 ms, image correcte à la capture.
 
+### Mémoire : file d'images ramenée à un quart de seconde (2026-09-23, itération 23 de la boucle)
+
+- La file d'images décodées gardait **seize** images d'avance. À 25 Mo l'image 4K 10 bits, cela immobilise **400 Mo** pour deux tiers de seconde de lecture, sans utilité : le worker applique déjà une contre-pression et l'audio conserve plusieurs secondes d'avance. Ramenée à **six** images (un quart de seconde).
+- **Mesure sur le même fichier 4K HDR de 330 s** : mémoire résidente **1745-1836 Mo → 1549-1574 Mo** (environ 250 Mo de moins, l'ordre de grandeur attendu). Consommation processeur inchangée (50 % d'un cœur).
+- Aucune régression de fluidité : 960 paquets, 960 images décodées, **0 perdue**, `pos == wall`, tampon audio sain.
+- Pour situer : VLC occupait 1,5 Go sur ce même fichier — l'écart de mémoire est donc refermé.
+
 ### Reste à faire
 
 - [ ] Utiliser les métadonnées de mastering réelles (MaxCLL / master-display) comme pic de tone mapping, au lieu de la valeur figée `max_luminance` de la config.

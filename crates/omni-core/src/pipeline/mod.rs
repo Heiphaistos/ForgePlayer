@@ -44,7 +44,13 @@ pub enum PipelineEvent {
 }
 
 /// Capacité max des queues de frames (frames buffered).
-const VIDEO_QUEUE_DEPTH: usize = 16;
+///
+/// Une image 4K 10 bits pèse ~25 Mo décodée : seize d'avance immobilisent
+/// 400 Mo pour deux tiers de seconde de lecture, sans rien apporter puisque
+/// le worker applique une contre-pression et que l'audio garde plusieurs
+/// secondes d'avance. Six images (un quart de seconde) suffisent à absorber
+/// les à-coups de décodage.
+const VIDEO_QUEUE_DEPTH: usize = 6;
 const AUDIO_QUEUE_DEPTH: usize = 512;
 
 pub struct MediaPipeline {
