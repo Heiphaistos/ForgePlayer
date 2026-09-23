@@ -253,6 +253,13 @@ Format par entrée : `[STATUT] Zone — description`. STATUT ∈ {FIXED, OPEN, T
   - après, à 1,5× : `pos` passe de 159,68 s à 181,75 s pendant que le temps réel passe de 105,37 s à 120,44 s, soit **1,465×** (la montée en régime du filtre explique l'écart au 1,5 théorique), `audio_master=true` conservé, tampon audio entre 2,7 et 3,5 s ;
   - retour à 1× : 3,00 s de média pour 3,01 s de temps réel.
 
+### Fourmillement à la réduction d'échelle (2026-09-23, itération 17 de la boucle)
+
+- [FIXED] **Une image 4K affichée dans une fenêtre trois fois plus petite fourmillait.** L'échantillonnage bilinéaire ne moyenne que 2×2 texels : sur une réduction 3×, les deux tiers des texels ne sont jamais lus. Mesuré sur un plan fixe 4K : **+31,6 %** d'énergie hautes fréquences (variance du laplacien) par rapport au même plan réduit en Lanczos — c'est de l'aliasing, pas du détail.
+- Correctif : moyenne 3×3 sur l'empreinte réelle du pixel, obtenue par `fwidth` calculé en flux de contrôle uniforme puis passé aux `textureSampleLevel` (qui n'ont pas besoin de dérivées, donc l'appel reste légal hors flux uniforme).
+- **Piège** : appliquer le filtre au seul shader YUV→RGB ne change RIEN pour le HDR (mesuré : 0,02236 → 0,02218). En HDR cette passe rend à la résolution de la SOURCE dans une texture hors écran ; c'est la passe de tone mapping qui réduit ensuite à la taille de la fenêtre. Le filtre doit donc exister dans les deux shaders.
+- **Mesure finale** : énergie hautes fréquences 0,02236 → **0,01578**, soit **+31,6 % → −7,1 %** par rapport à la référence Lanczos (légèrement plus doux, ce qu'on attend d'une moyenne face à un sinc fenêtré).
+
 ### Reste à faire
 
 - [ ] Utiliser les métadonnées de mastering réelles (MaxCLL / master-display) comme pic de tone mapping, au lieu de la valeur figée `max_luminance` de la config.

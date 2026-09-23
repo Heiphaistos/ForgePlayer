@@ -30,6 +30,25 @@ struct ColorTransform {
 };
 @group(1) @binding(0) var<uniform> color: ColorTransform;
 
+// Moyenne 3×3 sur l'empreinte réelle du pixel à l'écran.
+//
+// L'échantillonnage bilinéaire ne moyenne que 2×2 texels : quand une image 4K
+// est affichée dans une fenêtre trois fois plus petite, les deux tiers des
+// texels ne sont jamais lus et l'image fourmille (mesuré : +32 % d'énergie
+// hautes fréquences par rapport à un Lanczos correct). Les décalages viennent
+// de `fwidth`, calculé une seule fois en flux uniforme puis passé ici —
+// `textureSampleLevel` n'a pas besoin de dérivées, donc l'appel reste légal.
+fn sample_box(t: texture_2d<f32>, uv: vec2<f32>, fw: vec2<f32>) -> vec4<f32> {
+    let o = fw / 3.0;
+    var acc = vec4<f32>(0.0);
+    for (var j: i32 = -1; j <= 1; j = j + 1) {
+        for (var i: i32 = -1; i <= 1; i = i + 1) {
+            acc = acc + textureSampleLevel(t, samp, uv + vec2<f32>(f32(i), f32(j)) * o, 0.0);
+        }
+    }
+    return acc / 9.0;
+}
+
 // ─── Fragment shader ────────────────────────────────────────────────────────
 
 @fragment
@@ -38,7 +57,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // de FFmpeg range sa valeur dans les bits BAS du mot 16 bits, la texture
     // R16Unorm la normalise donc sur 65535 au lieu de 1023.
     let scale = color.offset.z;
-    let y_raw = textureSample(y_tex, samp, in.tex_coord).r * scale;
+    // Empreinte du pixel en coordonnées de texture : calculée ici, en flux de
+    // contrôle uniforme, avant toute branche.
+    let fw = fwidth(in.tex_coord);
+    let y_raw = sample_box(y_tex, in.tex_coord, fw).r * scale;
 
     // Deux dispositions de chroma :
     //  - planaire (YUV420P / YUV420P10LE) : U et V dans deux textures R.
@@ -46,11 +68,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     //    U et V entrelacés dans une seule texture RG, liée aux deux slots.
     // `color.offset.x` porte le drapeau (uniforme, donc branche sûre pour
     // textureSample).
-    let uv_tex = textureSample(u_tex, samp, in.tex_coord) * scale;
+    let uv_tex = sample_box(u_tex, in.tex_coord, fw) * scale;
     var u_raw = uv_tex.r;
     var v_raw = uv_tex.g;
     if (color.offset.x < 0.5) {
-        v_raw = textureSample(v_tex, samp, in.tex_coord).r * scale;
+        v_raw = sample_box(v_tex, in.tex_coord, fw).r * scale;
     }
 
     // `color.offset.y` porte l'offset de luma : 16/255 en plage limitée

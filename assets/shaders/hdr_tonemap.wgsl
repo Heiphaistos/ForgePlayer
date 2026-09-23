@@ -113,8 +113,25 @@ struct VOut {
     return VOut(vec4<f32>(x, y, 0.0, 1.0), vec2<f32>((x + 1.0) * 0.5, (1.0 - y) * 0.5));
 }
 
+// Moyenne 3×3 sur l'empreinte réelle du pixel. C'est ICI que le contenu HDR
+// est réduit : la première passe rend à la résolution de la source dans une
+// texture hors écran, cette passe-ci l'amène à la taille de la fenêtre. Sans
+// cette moyenne, seuls 2×2 texels sur les 9 d'une réduction 3× sont lus et
+// l'image fourmille.
+fn sample_box(uv: vec2<f32>, fw: vec2<f32>) -> vec3<f32> {
+    let o = fw / 3.0;
+    var acc = vec3<f32>(0.0);
+    for (var j: i32 = -1; j <= 1; j = j + 1) {
+        for (var i: i32 = -1; i <= 1; i = i + 1) {
+            acc = acc + textureSampleLevel(hdr_tex, samp, uv + vec2<f32>(f32(i), f32(j)) * o, 0.0).rgb;
+        }
+    }
+    return acc / 9.0;
+}
+
 @fragment fn fs_main(in: VOut) -> @location(0) vec4<f32> {
-    let signal = clamp(textureSample(hdr_tex, samp, in.uv).rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+    let fw = fwidth(in.uv);
+    let signal = clamp(sample_box(in.uv, fw), vec3<f32>(0.0), vec3<f32>(1.0));
     let peak_nits = max(params.max_luminance, SDR_WHITE_NITS);
 
     // 1. Signal encodé → luminance absolue (nits).
