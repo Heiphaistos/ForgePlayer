@@ -66,7 +66,7 @@ impl Default for AppConfig {
             volume:                1.0,
             hw_accel:              "auto".into(),
             subtitle_lang:         "fr".into(),
-            tonemap_mode:          1,
+            tonemap_mode:          0,
             max_luminance:         1000.0,
             subtitle_service_port: 18080,
             media_indexer_port:    18081,

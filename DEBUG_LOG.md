@@ -127,6 +127,14 @@ Format par entrée : `[STATUT] Zone — description`. STATUT ∈ {FIXED, OPEN, T
 - `hdr10_4k.mp4` (rampe PQ noir→blanc 4K) : dégradé complet visible de bout en bout (avant : quasi tout blanc).
 - `sdr10_4k.mp4` (4K **10-bit BT.709 SDR**) : aucun badge HDR, aucun tone mapping, couleurs normales — la régression « 10-bit = HDR » ne se produit plus.
 
+### Calage sur VLC (2026-09-23, itération 2 de la boucle)
+
+- [FIXED] **Tone mapping appliqué canal par canal** — chaque composante était compressée séparément, donc le canal dominant saturait avant les autres et les aplats colorés se délavaient (aplat bleu mesuré à +0,17 par rapport à VLC). Le tone mapping porte maintenant sur la LUMINANCE seule, la chrominance suit le même rapport (méthode libplacebo/VLC).
+- [FIXED] **Courbe par défaut trop claire** — ACES et Hable sont des courbes *scene-referred* : elles remontent aussi les tons moyens. Courbe de VLC relevée expérimentalement sur le même fichier (rapport luminance source normalisée 203 nits → luminance affichée) : 0,037→0,034 · 0,071→0,055 · 0,343→0,257 · 1,95→0,725 · 5,58→1,0. C'est exactement du **Reinhard étendu** avec le pic à `max_luminance/203`. Devenu le mode par défaut (`tonemap_mode = 0`).
+- **Mesure** (mêmes plan fixe HDR10, fenêtres capturées, luminance linéarisée, écart moyen des quantiles p5→p90 par rapport à VLC) : ACES par canal **0,0505** · knee neutre **0,0576** · **Reinhard étendu 0,0162**. Quantiles : VLC p50 0,257 / p75 0,725 — ForgePlayer p50 0,254 / p75 0,703.
+- Modes ACES / Hable / Neutre restent disponibles dans Paramètres (désormais eux aussi luminance-only).
+- Méthode réutilisable : plan fixe de 5 s (`still_hdr_5s.mp4`), capture des deux fenêtres par `pilote.py`, dé-gamma sRGB puis comparaison des quantiles — insensible au décalage de cadrage entre les deux lecteurs.
+
 ### Reste à faire
 
 - [ ] Utiliser les métadonnées de mastering réelles (MaxCLL / master-display) comme pic de tone mapping, au lieu de la valeur figée `max_luminance` de la config.

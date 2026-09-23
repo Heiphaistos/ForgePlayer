@@ -8,7 +8,7 @@
 @group(0) @binding(1) var samp:    sampler;
 
 struct ToneMapParams {
-    mode:          u32,   // 0=Reinhard étendu, 1=ACES, 2=Hable
+    mode:          u32,   // 0=Reinhard étendu (défaut, calé sur VLC), 1=ACES, 2=Hable, 3=neutre
     max_luminance: f32,   // pic de luminance du contenu, en nits (ex: 1000)
     exposure:      f32,
     transfer:      u32,   // 1=PQ (SMPTE ST.2084), 2=HLG (ARIB STD-B67)
@@ -51,23 +51,37 @@ fn hlg_eotf(e: vec3<f32>, peak: f32) -> vec3<f32> {
 
 // ── Opérateurs de tone mapping (entrée normalisée : 1.0 = blanc diffus) ─────
 
-fn aces_filmic(x: vec3<f32>) -> vec3<f32> {
+fn aces_filmic(x: f32) -> f32 {
     let a = 2.51; let b = 0.03; let c = 2.43; let d = 0.59; let e = 0.14;
-    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), vec3<f32>(0.0), vec3<f32>(1.0));
+    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
 }
 
-fn hable_partial(x: vec3<f32>) -> vec3<f32> {
+fn hable_partial(x: f32) -> f32 {
     let A = 0.15; let B = 0.50; let C = 0.10;
     let D = 0.20; let E = 0.02; let F = 0.30;
-    return ((x * (A * x + C * B) + D * E) / (x * (A * x + B) + D * F)) - vec3<f32>(E / F);
+    return ((x * (A * x + C * B) + D * E) / (x * (A * x + B) + D * F)) - (E / F);
 }
-fn hable(v: vec3<f32>) -> vec3<f32> {
-    return hable_partial(v * 2.0) / hable_partial(vec3<f32>(11.2));
+fn hable(v: f32) -> f32 {
+    return hable_partial(v * 2.0) / hable_partial(11.2);
+}
+
+// Courbe neutre : identité sous le genou, puis compression asymptotique vers
+// 1.0. C'est le comportement attendu d'un tone mapping HDR→SDR (celui de
+// libplacebo/VLC) : le blanc diffus et tout ce qui est en dessous sort
+// EXACTEMENT comme en SDR, seuls les hautes lumières au-dessus sont ramenées.
+// Les courbes filmiques (ACES, Hable) sont scene-referred : elles remontent
+// aussi les tons moyens, ce qui délave l'image (mesuré : +0,17 sur un aplat
+// bleu par rapport à VLC).
+fn neutral_knee(l: f32) -> f32 {
+    let k = 0.75;
+    if (l <= k) { return l; }
+    let s = 1.0 - k;
+    return k + s * (1.0 - exp(-(l - k) / s));
 }
 
 // Reinhard étendu : préserve le blanc diffus à 1.0 et compresse seulement ce
 // qui le dépasse, jusqu'au pic `peak` (rapporté au blanc diffus).
-fn reinhard_extended(x: vec3<f32>, peak: f32) -> vec3<f32> {
+fn reinhard_extended(x: f32, peak: f32) -> f32 {
     let p = max(peak, 1.0001);
     return x * (1.0 + x / (p * p)) / (1.0 + x);
 }
@@ -112,16 +126,21 @@ struct VOut {
     }
 
     // 2. Normalisation sur le blanc diffus : 1.0 = blanc SDR, pas le pic.
-    var c = nits * (params.exposure / SDR_WHITE_NITS);
+    let c = nits * (params.exposure / SDR_WHITE_NITS);
     let peak = peak_nits / SDR_WHITE_NITS;
 
-    // 3. Tone mapping.
-    var ldr: vec3<f32>;
+    // 3. Tone mapping sur la LUMINANCE seule, la chrominance suit le même
+    //    rapport. Compresser chaque canal séparément délave les aplats
+    //    colorés (le canal le plus fort sature avant les autres).
+    let l = max(dot(c, vec3<f32>(0.2627, 0.6780, 0.0593)), 1e-6);
+    var lm: f32;
     switch params.mode {
-        case 1u:  { ldr = aces_filmic(c); }
-        case 2u:  { ldr = hable(c); }
-        default:  { ldr = reinhard_extended(c, peak); }
+        case 0u:  { lm = reinhard_extended(l, peak); }
+        case 1u:  { lm = aces_filmic(l); }
+        case 2u:  { lm = hable(l); }
+        default:  { lm = neutral_knee(l); }
     }
+    var ldr = c * (lm / l);
 
     // 4. Gamut BT.2020 → BT.709, puis encodage sRGB.
     ldr = clamp(bt2020_to_bt709(ldr), vec3<f32>(0.0), vec3<f32>(1.0));

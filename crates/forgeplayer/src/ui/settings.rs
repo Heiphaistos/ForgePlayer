@@ -32,7 +32,7 @@ pub fn show(ctx: &Context, open: &mut bool, cfg: &mut AppConfig) {
                 ui.add_space(4.0);
                 ui.label(RichText::new("Tone mapping HDR").size(12.0));
                 ui.horizontal(|ui| {
-                    for (mode, label) in [(0u32, "Reinhard"), (1, "ACES"), (2, "Hable")] {
+                    for (mode, label) in [(0u32, "Reinhard"), (3, "Neutre"), (1, "ACES"), (2, "Hable")] {
                         if ui.radio(cfg.tonemap_mode == mode, label).clicked() {
                             cfg.tonemap_mode = mode;
                             changed = true;
