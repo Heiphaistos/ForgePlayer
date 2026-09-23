@@ -313,4 +313,50 @@ Format par entrée : `[STATUT] Zone — description`. STATUT ∈ {FIXED, OPEN, T
 - [ ] Zéro-copie D3D11 ↔ wgpu (toujours « hw decode + copy-back »).
 
 
+## BILAN DE LA BOUCLE AUTONOME — nuit du 2026-09-22 au 2026-09-23
+
+**Point de départ** : « le lecteur avait des problèmes à lire tout ce qui est film 4K/2K, et en HDR tout était hyper éblouissant ». **Arrivée** : deux versions publiées (v1.6.0 puis v1.7.1), 25 commits, 24 itérations.
+
+### Les deux plaintes d'origine
+
+| Plainte | Cause réelle | Preuve |
+|---|---|---|
+| HDR « hyper éblouissant » | `pq_to_linear()` défini mais **jamais appelé** : le signal PQ était multiplié par 10 puis tone-mappé, tout au-delà de 10 % de code PQ saturait à blanc | rampe PQ : dégradé complet au lieu d'un aplat blanc ; écart de quantiles avec VLC **0,0162** |
+| 4K/2K saccadé | conversion `swscale` + passe de 24 Mo **par image** sur tout le décodage matériel, et images d'avance jetées par `try_send` | **0 image perdue sur 7 911** sur 5 minutes de 4K HDR ; `pos == wall` à ±10 ms |
+
+### Défauts trouvés en chemin (aucun n'était dans la demande)
+
+- Tout flux **10 bits SDR** était traité comme du HDR (détection sur la profondeur de bits) et ressortait brûlé.
+- Tone mapping appliqué **canal par canal** : aplats colorés délavés (+0,17 sur un mur bleu face à VLC).
+- Pic de tone mapping **figé à 1000 nits** au lieu de MaxCLL / écran de mastering.
+- **Plage de couleur complète** (JPEG/PC) ignorée : noirs écrasés, blancs écrêtés.
+- **Saut sur fichier à GOP long** : image figée en pause, gel de plusieurs secondes en lecture.
+- **Lecture réseau** sans aucun réglage : 10 s avant d'annoncer une URL injoignable, flux mort à la moindre coupure.
+- **`file://`** cassé depuis la v1.4.5.
+- **Sous-titres image (PGS/VOBSUB/DVB)** jamais affichés.
+- Sous-titres **jamais activés** sans appui sur `S`.
+- **Vitesse de lecture inerte** dès qu'il y avait du son.
+- **Repli 5.1/7.1 saturé** : distorsion audible sur la plupart des films 4K.
+- **Fourmillement** à la réduction d'échelle (+31,6 % d'énergie hautes fréquences face à un Lanczos).
+- Processeur : **80 % d'un cœur** sur un 4K HDR, mémoire 1,8 Go.
+
+### Nouveautés
+
+Capture d'image (`Maj+S`, relue depuis le GPU donc identique à l'écran), reprise de lecture par fichier, sous-titres image, activation automatique des sous-titres, entrées de menu pour la vitesse.
+
+### Chiffres finaux (même fichier 4K HDR, même machine)
+
+- Images perdues : **0 sur 7 911** (5 minutes).
+- Écart de rendu avec VLC : **0,0162** en PQ, **0,0120** en HLG (quantiles p5→p90).
+- Processeur : **80 % → 50 %** d'un cœur. Mémoire : **1,8 Go → 1,55 Go** (VLC : 1,5 Go).
+- Tampon audio jamais sous **2,32 s** sur 5 minutes.
+
+### Ce qui reste ouvert
+
+1. **Zéro-copie D3D11 ↔ wgpu** — seul écart de performance restant avec VLC (50 % contre 8 % d'un cœur). Les 15,4 ms par image sont la copie GPU→RAM ; il faut forcer le backend DX12 (l'application tourne sur Vulkan) et passer par `wgpu_hal`.
+2. **Précision du saut** sur fichier à GOP très long : on se cale sur l'image clé, jusqu'à ~10 s avant la cible (compromis assumé, comme VLC et mpv).
+3. **VOBSUB et DVB** : même chemin de code que PGS, mais non vérifiés faute d'échantillon.
+4. **Sortie surround réelle** : le repli stéréo est testé unitairement, la sortie 5.1 sur vrai matériel reste non vérifiée (aucun périphérique surround ici).
+
+
 ## Journal chronologique
