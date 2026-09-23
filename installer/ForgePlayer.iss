@@ -2,7 +2,7 @@
 ; Build: ISCC.exe installer\ForgePlayer.iss (run from repo root, expects dist\ populated by build.bat release x64)
 
 #define MyAppName "ForgePlayer"
-#define MyAppVersion "1.7.0"
+#define MyAppVersion "1.7.1"
 #define MyAppPublisher "ForgePlayer"
 #define MyAppExeName "launch.bat"
 #define MyDistDir "..\dist"

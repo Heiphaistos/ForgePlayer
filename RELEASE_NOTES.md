@@ -2,6 +2,21 @@
 
 ---
 
+## v1.7.1 (2026-09-23) — Moins de processeur, moins de mémoire, son multicanal sans saturation
+
+### Corrections
+
+- **Le repli 5.1/7.1 vers la stéréo saturait.** `FL + 0,707·FC + 0,707·BL` atteint 2,41 à pleine échelle et était simplement écrêté : distorsion audible sur tout film multicanal un peu fort. Le repli est désormais normalisé par le total des coefficients, comme le font FFmpeg et VLC — la pleine échelle sort exactement à 1,0. Six tests unitaires couvrent les dispositions mono, stéréo, 5.1 et 7.1.
+- **Consommation processeur divisée par plus de trois sur le trajet de rendu.** La frame système de rapatriement était réallouée à chaque image (24 Mo en 4K), et la passe qui ombre toute la résolution source était rejouée à chaque redessin de l'interface (~70 Hz) pour un film à 24 images par seconde. Résultat mesuré sur un fichier 4K HDR : **80 % → 50 % d'un cœur**.
+- **250 Mo de mémoire en moins** : la file d'images décodées gardait seize images d'avance (400 Mo en 4K 10 bits) là où six suffisent. Mesure : 1745-1836 Mo → 1549-1574 Mo.
+
+### Mesures et limites
+
+- Comparaison avec VLC sur le même fichier 4K HDR : mémoire équivalente (1,5 Go de part et d'autre), processeur 50 % contre 8 %. L'écart restant est la copie GPU→RAM du décodage matériel (15,4 ms par image), que VLC évite par un chemin zéro-copie D3D11 ; c'est la limitation connue qui reste ouverte.
+- Compatibilité vérifiée sans anomalie : cadence variable, ProRes 422 10 bits, audio 44,1 kHz, 5.1 AC-3, résolution 1918×1078.
+
+---
+
 ## v1.7.0 (2026-09-23) — Réseau, sous-titres image, vitesse réelle, image plus nette
 
 ### Nouveautés
