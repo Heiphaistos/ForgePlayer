@@ -26,6 +26,14 @@ pub struct AudioDecoder {
     /// que font VLC et mpv. Sans ça, régler la vitesse n'accélère que l'image
     /// et le son part en décalage.
     speed:       f32,
+    /// Décalage du début du conteneur, retranché des horodatages.
+    start_offset: f64,
+    /// Format d'échantillon de la dernière frame décodée : sert à détecter un
+    /// changement de paramètres en cours de flux.
+    resampler_src_fmt: Option<ffmpeg::format::Sample>,
+    /// Horodatage attendu de la prochaine image, reconstruit en comptant les
+    /// échantillons. Sert quand le conteneur n'en fournit pas.
+    next_pts: Option<f64>,
     /// Graphe `abuffer → atempo… → abuffersink`, reconstruit à chaque
     /// changement de vitesse.
     tempo:       Option<ffmpeg::filter::Graph>,
@@ -44,7 +52,8 @@ impl AudioDecoder {
         let src_channels = decoder.channels() as u8;
         Ok(Self {
             decoder, resampler: None, time_base, src_rate, src_layout, src_channels,
-            speed: 1.0, tempo: None, tempo_anchor: None,
+            speed: 1.0, start_offset: 0.0, resampler_src_fmt: None, next_pts: None,
+            tempo: None, tempo_anchor: None,
             pending: std::collections::VecDeque::new(),
         })
     }
@@ -67,40 +76,52 @@ impl AudioDecoder {
             Err(e) => return Err(e).context("receive_frame audio"),
         }
 
-        let pts_secs = raw.pts()
-            .map(|p| p as f64 * self.time_base)
-            .unwrap_or(0.0);
-
-        // Conversion vers f32 packed, même taux, même layout
-        let resampler = match &mut self.resampler {
-            Some(r) => r,
-            None => {
-                let r = SwrContext::get(
-                    raw.format(),
-                    self.src_layout,
-                    self.src_rate,
-                    ffmpeg::format::Sample::F32(ffmpeg::format::sample::Type::Packed),
-                    self.src_layout,   // même layout — le downmix est dans AudioEngine
-                    self.src_rate,
-                )
-                .context("création SwrContext")?;
-                self.resampler = Some(r);
-                self.resampler.as_mut().unwrap()
-            }
+        // Horodatage : celui du conteneur quand il existe VRAIMENT. Certains
+        // flux (WMA en ASF) donnent 0 à chaque image ; s'y fier fige l'horloge
+        // de lecture à zéro et gèle tout. On poursuit alors le compte des
+        // échantillons déjà joués.
+        let container_pts = raw.pts()
+            .filter(|p| *p != ffmpeg::ffi::AV_NOPTS_VALUE)
+            .map(|p| (p as f64 * self.time_base - self.start_offset).max(0.0));
+        let pts_secs = match (container_pts, self.next_pts) {
+            (Some(p), Some(expected)) if p <= 0.0 && expected > 0.0 => expected,
+            (Some(p), _) => p,
+            (None, Some(expected)) => expected,
+            (None, None) => 0.0,
         };
 
-        let mut resampled = ffmpeg::util::frame::audio::Audio::empty();
-        resampler.run(&raw, &mut resampled).context("resampling audio")?;
+        // Conversion vers f32 entrelacé, faite à la main.
+        //
+        // Passer par `swr` obligeait à lui décrire la disposition des canaux à
+        // l'avance ; or plusieurs codecs (WMA en tête) ne la révèlent qu'après
+        // la première image, et FFmpeg 8 refuse alors la frame avec « Input
+        // changed » — la piste se taisait entièrement. Les formats produits par
+        // les décodeurs sont peu nombreux et la conversion tient en quelques
+        // lignes, sans rien à déclarer d'avance.
+        let frame_rate     = raw.rate();
+        let frame_channels = raw.channels().max(1) as usize;
+        let samples = match interleave_to_f32(&raw, frame_channels) {
+            Some(v) => v,
+            None => {
+                anyhow::bail!("format audio non géré : {:?}", raw.format());
+            }
+        };
+        self.src_rate     = frame_rate;
+        self.src_channels = frame_channels as u8;
+        if frame_rate > 0 {
+            let dur = samples.len() as f64 / (frame_rate as f64 * frame_channels as f64);
+            self.next_pts = Some(pts_secs + dur);
+        }
 
         if (self.speed - 1.0).abs() >= 0.001 {
-            let produced = self.stretch(&resampled, pts_secs)?;
+            let produced = self.stretch_samples(&samples, pts_secs)?;
             self.pending.extend(produced);
             return Ok(self.pending.pop_front());
         }
 
         Ok(Some(DecodedAudioFrame {
             pts_secs,
-            samples: audio_frame_to_f32(&resampled),
+            samples,
             sample_rate: self.src_rate,
             channels:    self.src_channels,
         }))
@@ -109,6 +130,8 @@ impl AudioDecoder {
     /// Change la vitesse de lecture. Le graphe est reconstruit au prochain
     /// frame ; les frames déjà dans le filtre sont abandonnées (quelques
     /// dizaines de millisecondes, inaudible au moment d'un changement).
+    pub fn set_start_offset(&mut self, secs: f64) { self.start_offset = secs; }
+
     pub fn set_speed(&mut self, speed: f32) {
         let speed = speed.clamp(0.25, 4.0);
         if (speed - self.speed).abs() < 0.001 { return; }
@@ -149,15 +172,26 @@ impl AudioDecoder {
         Ok(())
     }
 
-    /// Passe un frame f32 packed dans `atempo` et rend les frames produites,
-    /// horodatées en temps MÉDIA.
-    fn stretch(&mut self, frame: &ffmpeg::util::frame::audio::Audio, pts_secs: f64)
+    /// Passe des échantillons f32 entrelacés dans `atempo` et rend les frames
+    /// produites, horodatées en temps MÉDIA.
+    fn stretch_samples(&mut self, samples: &[f32], pts_secs: f64)
         -> Result<Vec<DecodedAudioFrame>>
     {
         if self.tempo.is_none() { self.build_tempo()?; }
         let rate = self.src_rate as f64;
+        let channels = self.src_channels.max(1) as usize;
+        let frames = samples.len() / channels;
+
+        let mut input = ffmpeg::util::frame::audio::Audio::new(
+            ffmpeg::format::Sample::F32(ffmpeg::format::sample::Type::Packed),
+            frames,
+            self.src_layout,
+        );
+        unsafe {
+            let dst = input.data_mut(0).as_mut_ptr() as *mut f32;
+            std::ptr::copy_nonoverlapping(samples.as_ptr(), dst, samples.len());
+        }
         let graph = self.tempo.as_mut().context("graphe atempo absent")?;
-        let mut input = frame.clone();
         input.set_pts(Some((pts_secs * rate) as i64));
         graph.get("in").context("entrée du graphe absente")?.source().add(&input)?;
 
@@ -194,4 +228,65 @@ fn audio_frame_to_f32(frame: &ffmpeg::util::frame::audio::Audio) -> Vec<f32> {
         out[i] = f32::from_le_bytes(chunk.try_into().unwrap());
     }
     out
+}
+
+/// Convertit une frame audio décodée en `f32` entrelacés.
+///
+/// Couvre les formats que produisent réellement les décodeurs FFmpeg, planaires
+/// comme entrelacés. Renvoie `None` pour un format inconnu, que l'appelant
+/// signale plutôt que de jouer du bruit.
+fn interleave_to_f32(
+    frame: &ffmpeg::util::frame::audio::Audio,
+    channels: usize,
+) -> Option<Vec<f32>> {
+    use ffmpeg::format::sample::Type::{Packed, Planar};
+    use ffmpeg::format::Sample::*;
+
+    let samples_per_ch = frame.samples();
+    let mut out = vec![0f32; samples_per_ch * channels];
+
+    // Lit l'échantillon `i` du plan `p`, converti en f32 dans [-1, 1].
+    macro_rules! fill {
+        ($t:ty, $conv:expr, $planar:expr) => {{
+            let scale = $conv;
+            if $planar {
+                for ch in 0..channels {
+                    let data = frame.data(ch);
+                    let vals = unsafe {
+                        std::slice::from_raw_parts(data.as_ptr() as *const $t, samples_per_ch)
+                    };
+                    for (i, v) in vals.iter().enumerate() {
+                        out[i * channels + ch] = scale(*v);
+                    }
+                }
+            } else {
+                let data = frame.data(0);
+                let vals = unsafe {
+                    std::slice::from_raw_parts(
+                        data.as_ptr() as *const $t,
+                        samples_per_ch * channels,
+                    )
+                };
+                for (i, v) in vals.iter().enumerate() {
+                    out[i] = scale(*v);
+                }
+            }
+        }};
+    }
+
+    match frame.format() {
+        F32(Planar) => fill!(f32, |v: f32| v, true),
+        F32(Packed) => fill!(f32, |v: f32| v, false),
+        F64(Planar) => fill!(f64, |v: f64| v as f32, true),
+        F64(Packed) => fill!(f64, |v: f64| v as f32, false),
+        I16(Planar) => fill!(i16, |v: i16| v as f32 / 32768.0, true),
+        I16(Packed) => fill!(i16, |v: i16| v as f32 / 32768.0, false),
+        I32(Planar) => fill!(i32, |v: i32| v as f32 / 2_147_483_648.0, true),
+        I32(Packed) => fill!(i32, |v: i32| v as f32 / 2_147_483_648.0, false),
+        U8(Planar)  => fill!(u8, |v: u8| (v as f32 - 128.0) / 128.0, true),
+        U8(Packed)  => fill!(u8, |v: u8| (v as f32 - 128.0) / 128.0, false),
+        // `None` seul désignerait ici `Sample::None`, importé juste au-dessus.
+        _ => return Option::None,
+    }
+    Some(out)
 }

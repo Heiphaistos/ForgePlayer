@@ -170,7 +170,24 @@ impl DecodeContext {
     /// Seek vers une position en secondes.
     /// av_seek_frame + BACKWARD : se cale sur la keyframe ≤ cible (standard lecteurs).
     /// L'ancien `format_ctx.seek(ts, ts..)` (min_ts = cible) échouait en EPERM sur MP4.
+    /// Décalage du début du flux, en secondes.
+    ///
+    /// Un MPEG-2 TS ne commence pas à zéro : FFmpeg y rapporte des horodatages
+    /// qui démarrent vers 1,4 s. Sans retrancher ce décalage, la position
+    /// affichée est en avance d'autant et un saut tombe à côté.
+    pub fn start_offset_secs(&self) -> f64 {
+        let start = unsafe { (*self.format_ctx.as_ptr()).start_time };
+        if start == ffmpeg::ffi::AV_NOPTS_VALUE || start <= 0 {
+            0.0
+        } else {
+            start as f64 / f64::from(ffmpeg::ffi::AV_TIME_BASE)
+        }
+    }
+
     pub fn seek(&mut self, position_secs: f64) -> Result<()> {
+        // La cible est exprimée dans le temps vu par l'utilisateur (qui part de
+        // zéro) : on repasse dans le temps du conteneur.
+        let position_secs = position_secs + self.start_offset_secs();
         let ts = (position_secs * f64::from(ffmpeg::ffi::AV_TIME_BASE)) as i64;
         unsafe {
             let ret = ffmpeg::ffi::av_seek_frame(

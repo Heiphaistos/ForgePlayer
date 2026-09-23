@@ -48,6 +48,8 @@ pub struct VideoDecoder {
     /// Laisse les images sur le GPU au lieu de les rapatrier en mémoire
     /// centrale. Activé par le pipeline quand le rendu sait les consommer.
     zero_copy:   bool,
+    /// Décalage du début du conteneur, retranché des horodatages.
+    start_offset: f64,
     scaler:      Option<SwsContext>,
     time_base:   f64,
     // Tracks source properties to detect mid-stream changes requiring scaler rebuild.
@@ -74,6 +76,7 @@ impl VideoDecoder {
             scaler_src_fmt: None,
             scaler_target_fmt: None,
             zero_copy: false,
+            start_offset: 0.0,
             sw_frame: ffmpeg::util::frame::video::Video::empty(),
             prof_n: 0, prof_dl: 0.0, prof_ex: 0.0,
         })
@@ -103,6 +106,8 @@ impl VideoDecoder {
     /// Active le chemin sans copie (l'image reste en mémoire vidéo).
     pub fn set_zero_copy(&mut self, on: bool) { self.zero_copy = on; }
 
+    pub fn set_start_offset(&mut self, secs: f64) { self.start_offset = secs; }
+
     pub fn send_packet(&mut self, packet: &ffmpeg::Packet) -> Result<()> {
         self.decoder
             .send_packet(packet)
@@ -125,8 +130,9 @@ impl VideoDecoder {
 
         let pts_secs = raw
             .pts()
-            .map(|p| p as f64 * self.time_base)
-            .unwrap_or(0.0);
+            .map(|p| p as f64 * self.time_base - self.start_offset)
+            .unwrap_or(0.0)
+            .max(0.0);
 
         // Frame décodée sur GPU (D3D11VA/DXVA2) : rapatrie en mémoire système
         // avant toute conversion — le reste du pipeline (extract_planes,

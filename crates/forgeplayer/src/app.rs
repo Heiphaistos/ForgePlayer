@@ -63,9 +63,18 @@ pub struct ForgeApp {
     dbg_start:         Option<std::time::Instant>,
     dbg_last_log:      f64,
     cpu_probe:         omni_core::cpu_probe::CpuProbe,
+    /// Suivi de l'arrêt éventuel de la piste audio.
+    last_audio_pos:     f64,
+    audio_stall_since:  Option<std::time::Instant>,
+    audio_stall_warned: bool,
 }
 
 /// Caractères interdits dans un nom de fichier Windows.
+/// Délai au-delà duquel une piste audio qui n'avance plus cesse de piloter
+/// l'horloge. Assez long pour absorber un remplissage de tampon, assez court
+/// pour que l'image ne paraisse pas gelée.
+const AUDIO_STALL_GRACE: f64 = 0.6;
+
 const INVALID_FILENAME_CHARS: &[char] = &['/', '\\', ':', '*', '?', '\"', '<', '>', '|'];
 
 impl ForgeApp {
@@ -166,6 +175,9 @@ impl ForgeApp {
             dbg_start: None,
             dbg_last_log: 0.0,
             cpu_probe: omni_core::cpu_probe::CpuProbe::new("interface+rendu"),
+            last_audio_pos: -1.0,
+            audio_stall_since: None,
+            audio_stall_warned: false,
         };
 
         // Restaure volume et vitesse de la session précédente
@@ -243,6 +255,9 @@ impl ForgeApp {
         *self.video_frame.lock() = None;
         self.video_transfer = 0;
         self.video_full_range = false;
+        self.last_audio_pos = -1.0;
+        self.audio_stall_since = None;
+        self.audio_stall_warned = false;
         self.video_peak_nits = None;
         self.pending_video_frame = None;
         self.config.add_recent(&path);
@@ -301,21 +316,58 @@ impl ForgeApp {
             .map(|i| !i.audio.is_empty()).unwrap_or(false);
         if !has_audio { return; }
         // Le son est étiré par `atempo` et ses frames restent horodatées en
-        // temps média : il reste donc l'horloge de référence quelle que soit
-        // la vitesse.
+        // temps média : il reste l'horloge de référence quelle que soit la
+        // vitesse.
         let Some(audio) = &self.audio else { return };
+        let now = std::time::Instant::now();
+
         let Some(pos) = audio.playback_position() else {
-            // Pas encore de données post-flush : on fige l'horloge sur la position
-            // connue plutôt que de laisser les événements de décodage la pousser.
-            self.player.clock_audio_master = true;
+            // Rien n'est encore sorti (démarrage, ou juste après un seek) : on
+            // fige brièvement l'horloge. Au-delà du délai de grâce, la piste
+            // est muette pour de bon et l'image ne doit pas rester bloquée
+            // avec elle.
+            if self.audio_stall_since.is_none() { self.audio_stall_since = Some(now); }
+            let stalled = self.audio_stall_since
+                .map(|t| now.duration_since(t).as_secs_f64() > AUDIO_STALL_GRACE)
+                .unwrap_or(false);
+            if !stalled { self.player.clock_audio_master = true; }
+            else { self.warn_audio_stall(); }
             return;
         };
+
+        // Détection d'arrêt : si la position jouée ne bouge plus alors que la
+        // lecture est en cours, garder l'audio comme horloge fige TOUT — image
+        // comprise — et le pipeline s'auto-bloque (la file vidéo se remplit,
+        // le démultiplexeur s'arrête, l'audio ne peut plus se remplir).
+        if (pos - self.last_audio_pos).abs() > 1e-4 {
+            self.last_audio_pos = pos;
+            self.audio_stall_since = None;
+        } else if self.audio_stall_since.is_none() {
+            self.audio_stall_since = Some(now);
+        }
+        let playing = matches!(self.player.state, PlayerState::Playing | PlayerState::Buffering(_));
+        let stalled = playing && self.audio_stall_since
+            .map(|t| now.duration_since(t).as_secs_f64() > AUDIO_STALL_GRACE)
+            .unwrap_or(false);
+        if stalled {
+            self.warn_audio_stall();
+            return; // horloge murale : l'image continue, le son reprendra s'il revient
+        }
+
         self.player.clock_audio_master = true;
-        if matches!(self.player.state, PlayerState::Playing | PlayerState::Buffering(_)) {
+        if playing {
             self.player.position = pos;
             self.player.clock.update(pos);
         }
     }
+
+    fn warn_audio_stall(&mut self) {
+        if self.audio_stall_warned { return; }
+        self.audio_stall_warned = true;
+        log::warn!("piste audio silencieuse — lecture vidéo poursuivie sur l'horloge murale");
+        self.set_osd("Piste audio muette — lecture vidéo seule");
+    }
+
 
     /// Quand rien ne pilote l'horloge en continu (pas d'audio, pas de piste
     /// audio, ou vitesse ≠ 1×), l'horloge tourne en roue libre sur le temps réel

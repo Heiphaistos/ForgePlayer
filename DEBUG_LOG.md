@@ -325,6 +325,18 @@ Format par entrée : `[STATUT] Zone — description`. STATUT ∈ {FIXED, OPEN, T
 - **Cadence de redessin alignée sur le film** : 70 redessins par seconde pour 24 images/s, c'était le premier poste de processeur une fois le partage en place (16 % → 4 %).
 - **Non-régression** : 8 fichiers relus (4K HDR10, 4K SDR 10 bits, 4K AV1 HDR, 2K, 1080p, 5.1 AC-3, ProRes 422, HLG), tous fluides. Partage actif sur six ; AV1 et ProRes gardent l'ancien chemin — AV1 passe tout de même de 14 % à 11 %. Capture d'image vérifiée (3840×2160, quantiles 0,126/0,531/1,000, conformes au chemin précédent).
 
+### Revue de tous les formats — quatre défauts corrigés (2026-09-23, demandé par Momo)
+
+Dix combinaisons codec + conteneur passées une par une : H.264/AAC (mp4), H.264/FLAC (mkv), HEVC 8 bits/AC-3 (mkv), HEVC 10 bits/E-AC-3 (mp4), MPEG-2/MP2 (ts), VP9/Opus (webm), AV1/Vorbis (mkv), Xvid/MP3 (avi), Theora/Vorbis (ogv), WMV2/WMA (wmv). **Résultat final : 10/10 à l'heure exacte** (`|position − temps réel| < 0,35 s`, tampon audio ≈ 3 s). Partage GPU actif sur six d'entre eux.
+
+- [FIXED] **MPEG-2 TS : 8 images décodées sur 180.** « Static surface pool size exceeded » : la lecture sans copie garde les images vivantes jusqu'à l'affichage, le pool du décodeur matériel se vidait. `extra_hw_frames = 12` réservées. Mesure : 180/180 images après correctif.
+- [FIXED] **Flux TS : position en avance de 1,42 s.** Le conteneur démarre à 1,42 s et les horodatages étaient affichés bruts. `DecodeContext::start_offset_secs()` retranché dans les décodeurs audio et vidéo, ré-ajouté dans `seek()`. Mesure : `pos == wall` après correctif.
+- [FIXED] **WMV figé à 0,04 s.** Deux causes. (1) Le `SwrContext` était construit sur les paramètres annoncés à l'ouverture ; WMA ne les publie qu'après la première image décodée, d'où « Input changed » — erreur **avalée en silence** par un `while let Ok(Some(...))`. La conversion vers f32 entrelacé est désormais faite à la main (`interleave_to_f32`, formats planaires et entrelacés), sans paramètres à déclarer d'avance. (2) Les images WMA arrivent toutes avec un horodatage nul : il est reconstruit en comptant les échantillons. Mesure : 139 images audio décodées (0 avant), `pos == wall`.
+- [FIXED] **Theora à moitié vitesse.** La file de paquets vidéo compressés (64) saturait sur un Ogg qui livre la vidéo par rafales → arrêt de la lecture des paquets → audio affamé → horloge figée → image bloquée. Portée à 256 (ce sont des paquets compressés, quelques kilo-octets). Mesure : lecture du fichier de 6 s en 5,6 s de démultiplexage au lieu de 9,1 s, `pos == wall`.
+- [FIXED] **L'horloge n'est plus otage de la piste audio.** Si la position audio n'avance plus pendant 0,6 s, la lecture bascule sur l'horloge murale avec un avis à l'écran, au lieu de tout figer — c'est ce mécanisme qui a débloqué Theora et WMV pendant le diagnostic.
+- Les erreurs de décodage audio sont désormais journalisées une fois au lieu d'être avalées : sans ça, ces deux pannes restaient invisibles.
+- Non-régression 4K HDR10 : 8 à 11 % d'un cœur, ~600 Mo, partage sans copie toujours actif.
+
 ## BOUCLE ARRÊTÉE le 2026-09-23 à 14:42 (échéance 14:00)
 
 La tâche planifiée a été supprimée, plus rien n'est programmé. Dernier état : **v1.8.0 en ligne**, 27 commits, tout poussé.

@@ -160,9 +160,21 @@ impl HwAccelContext {
             let raw = ctx.as_mut_ptr();
             (*raw).hw_device_ctx = ffi::av_buffer_ref(self.device_ref);
             (*raw).get_format    = Some(get_format);
+            // Surfaces supplémentaires dans le pool du décodeur.
+            //
+            // En lecture sans copie, les images restent vivantes tant que le
+            // rendu ne les a pas consommées : file de six images, trois
+            // surfaces partagées, plus celle affichée. Sans cette réserve, le
+            // pool du décodeur se vide et FFmpeg abandonne des images —
+            // constaté sur un flux MPEG-2 TS : « Static surface pool size
+            // exceeded », 8 images décodées sur 180.
+            (*raw).extra_hw_frames = EXTRA_HW_FRAMES;
         }
     }
 }
+
+/// Images supplémentaires réservées dans le pool du décodeur matériel.
+const EXTRA_HW_FRAMES: std::os::raw::c_int = 12;
 
 fn num_cpus() -> usize {
     std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).clamp(2, 8)

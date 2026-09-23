@@ -2,6 +2,37 @@
 
 ---
 
+## v1.8.1 (2026-09-23) — Revue de tous les formats : quatre défauts corrigés
+
+Batterie de dix combinaisons codec + conteneur passée fichier par fichier. Quatre défauts en sont sortis, tous corrigés ; **les dix sont maintenant lus à l'heure exacte** (`position == temps réel`, tampon audio ≈ 3 s).
+
+| Format | Décodage | Résultat |
+|---|---|---|
+| H.264 + AAC (mp4) | GPU partagé | conforme |
+| H.264 + FLAC (mkv) | GPU partagé | conforme |
+| HEVC 8 bits + AC-3 (mkv) | GPU partagé | conforme |
+| HEVC 10 bits + E-AC-3 (mp4) | GPU partagé | conforme |
+| MPEG-2 + MP2 (ts) | GPU partagé | conforme |
+| VP9 + Opus (webm) | GPU partagé | conforme |
+| AV1 + Vorbis (mkv) | logiciel | conforme |
+| Xvid + MP3 (avi) | logiciel | conforme |
+| Theora + Vorbis (ogv) | logiciel | conforme |
+| WMV2 + WMA (wmv) | logiciel | conforme |
+
+### Corrections
+
+- **MPEG-2 TS : 8 images décodées sur 180.** Le pool de surfaces du décodeur matériel se vidait — « Static surface pool size exceeded » — parce que la lecture sans copie garde les images vivantes jusqu'à leur affichage. Douze surfaces supplémentaires sont désormais réservées.
+- **Flux TS : position en avance de 1,4 s.** Un MPEG-2 TS ne commence pas à zéro ; les horodatages du conteneur étaient affichés tels quels et les sauts tombaient à côté. Le décalage de départ est retranché partout, et ré-ajouté lors d'un saut.
+- **WMV : lecture figée à zéro.** Deux causes cumulées. D'abord le rééchantillonneur, figé sur les paramètres annoncés à l'ouverture alors que WMA ne les révèle qu'après la première image : la piste se taisait sur un « Input changed » jamais affiché. La conversion vers f32 est maintenant faite directement, sans rien à déclarer d'avance. Ensuite les images audio WMA arrivent toutes horodatées à zéro : l'horodatage est reconstruit en comptant les échantillons joués.
+- **Theora : lecture à moitié vitesse.** La file de paquets vidéo compressés (64) saturait sur un conteneur qui livre la vidéo par rafales, ce qui arrêtait la lecture des paquets et affamait l'audio, donc l'horloge, donc l'image. Portée à 256 paquets.
+- **Garde-fou général : l'horloge n'est plus otage de la piste audio.** Si le son cesse d'avancer pendant plus de 0,6 s, la lecture continue sur l'horloge murale et un avis s'affiche, au lieu de figer l'image — c'est ce qui bloquait complètement les deux fichiers ci-dessus.
+
+### Non-régression
+
+4K HDR10 : processeur 8 à 11 % d'un cœur, mémoire ~600 Mo, lecture sans copie toujours active.
+
+---
+
 ## v1.8.0 (2026-09-23) — Lecture 4K HDR sans copie : au niveau de VLC
 
 ### Le changement

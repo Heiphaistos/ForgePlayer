@@ -15,7 +15,12 @@ use crate::probe;
 /// prend du retard, on droppe le paquet plutôt que de bloquer ce thread — sinon
 /// l'audio (lu/décodé ici, sur ce même thread) se retrouverait affamé derrière
 /// un GOP 4K/HDR lent à décoder, exactement le bug qu'on corrige.
-const VIDEO_PKT_QUEUE_DEPTH: usize = 64;
+/// Profondeur portée à 256 : ce sont des paquets COMPRESSÉS (quelques
+/// kilo-octets), pas des images. Avec 64, un conteneur qui livre la vidéo par
+/// rafales — l'Ogg notamment — saturait cette file, ce qui arrêtait la lecture
+/// des paquets et affamait l'audio, donc l'horloge, donc l'affichage : la
+/// lecture démarrait à moitié vitesse.
+const VIDEO_PKT_QUEUE_DEPTH: usize = 256;
 
 pub fn run_demuxer(
     path:          &str,
@@ -104,7 +109,14 @@ pub fn run_demuxer(
     // reste local à CE thread : la preview post-seek-en-pause décode directement
     // depuis ctx.format_ctx dans une boucle autonome bornée, indépendante du flux
     // principal de paquets envoyés au worker.
-    if let Some(dec) = initial_video_dec.as_mut() { dec.set_zero_copy(zero_copy); }
+    let start_offset = ctx.start_offset_secs();
+    if start_offset > 0.0 {
+        log::info!("conteneur démarrant à {start_offset:.2} s — horodatages ramenés à zéro");
+    }
+    if let Some(dec) = initial_video_dec.as_mut() {
+        dec.set_zero_copy(zero_copy);
+        dec.set_start_offset(start_offset);
+    }
     let (video_pkt_tx, video_pkt_rx) = bounded::<VideoWorkerMsg>(VIDEO_PKT_QUEUE_DEPTH);
     let (eof_ack_tx, eof_ack_rx)     = bounded::<()>(1);
     let _video_worker = video_worker::spawn(
@@ -121,7 +133,7 @@ pub fn run_demuxer(
     let mut audio_dec = match a_idx {
         None => None,
         Some(_) => match ctx.build_audio_decoder().and_then(|d| AudioDecoder::new(d, a_tb)) {
-            Ok(dec) => Some(dec),
+            Ok(mut dec) => { dec.set_start_offset(start_offset); Some(dec) }
             Err(e) => {
                 log::warn!("piste audio illisible, lecture vidéo seule: {e:#}");
                 let _ = event_tx.send(PipelineEvent::Warning(
@@ -161,6 +173,7 @@ pub fn run_demuxer(
     let mut v_skip_until: Option<f64> = None;
     let mut a_skip_until: Option<f64> = None;
     let mut first_audio_after_seek = false;
+    let mut audio_error_logged = false;
 
     // DBGPROBE (diagnostic temporaire, RUST_LOG=debug)
     let dbg_start = std::time::Instant::now();
@@ -194,18 +207,24 @@ pub fn run_demuxer(
                     let new_video_dec = v_idx
                         .and_then(|_| ctx.build_video_decoder().ok())
                         .and_then(|d| VideoDecoder::new(d, v_tb).ok())
-                        .map(|mut d| { d.set_zero_copy(zero_copy); d });
+                        .map(|mut d| {
+                            d.set_zero_copy(zero_copy);
+                            d.set_start_offset(start_offset);
+                            d
+                        });
                     let _ = video_pkt_tx.send(VideoWorkerMsg::Reset {
                         decoder: new_video_dec, skip_until: Some(pos),
                     });
                     audio_dec = a_idx
                         .and_then(|_| ctx.build_audio_decoder().ok())
-                        .and_then(|d| AudioDecoder::new(d, a_tb).ok());
+                        .and_then(|d| AudioDecoder::new(d, a_tb).ok())
+                        .map(|mut d| { d.set_start_offset(start_offset); d });
                     // Décodeur local dédié à la preview post-seek-en-pause (voir plus
                     // bas) — indépendant de celui envoyé au worker.
                     preview_dec = v_idx
                         .and_then(|_| ctx.build_video_decoder().ok())
-                        .and_then(|d| VideoDecoder::new(d, v_tb).ok());
+                        .and_then(|d| VideoDecoder::new(d, v_tb).ok())
+                        .map(|mut d| { d.set_start_offset(start_offset); d });
                     preview_after_seek = paused;
                     v_skip_until = Some(pos);
                     a_skip_until = Some(pos);
@@ -229,7 +248,8 @@ pub fn run_demuxer(
                         ctx.audio_stream_idx = a_idx;
                         audio_dec = ctx.build_audio_decoder_for(new_idx)
                             .ok()
-                            .and_then(|d| AudioDecoder::new(d, a_tb).ok());
+                            .and_then(|d| AudioDecoder::new(d, a_tb).ok())
+                            .map(|mut d| { d.set_start_offset(start_offset); d });
                         log::info!("audio track switched → stream {new_idx}");
                     }
                 }
@@ -354,8 +374,26 @@ pub fn run_demuxer(
             if video_pkt_tx.try_send(VideoWorkerMsg::Packet(packet)).is_err() { dbg_v_dropped += 1; }
         } else if Some(stream_idx) == a_idx {
             if let Some(dec) = &mut audio_dec {
-                let _ = dec.send_packet(&packet);
-                while let Ok(Some(frame)) = dec.receive_frame() {
+                if let Err(e) = dec.send_packet(&packet) {
+                    // Une erreur avalée ici, c'est une piste audio qui se tait
+                    // sans rien dire : on la signale une fois.
+                    if !audio_error_logged {
+                        audio_error_logged = true;
+                        log::warn!("décodage audio : {e:#}");
+                    }
+                }
+                loop {
+                    let frame = match dec.receive_frame() {
+                        Ok(Some(f)) => f,
+                        Ok(None) => break,
+                        Err(e) => {
+                            if !audio_error_logged {
+                                audio_error_logged = true;
+                                log::warn!("décodage audio interrompu : {e:#}");
+                            }
+                            break;
+                        }
+                    };
                     // Post-seek : jeter l'audio entre l'image clé et la cible —
                     // mais seulement si la vidéo fait le même rattrapage (même
                     // seuil, même point de départ après `av_seek_frame`).
