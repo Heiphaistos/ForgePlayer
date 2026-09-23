@@ -171,6 +171,14 @@ Format par entrée : `[STATUT] Zone — description`. STATUT ∈ {FIXED, OPEN, T
 - **Mesure de justesse** : même image fixe encodée en 8 bits et en 10 bits, quantiles p5→p95 — rendu 10 bits **0,002** d'écart avec le rendu 8 bits, et 0,026 avec le PNG source (même écart systématique que le 8 bits, dû à la capture et au ré-encodage). Aucune régression visuelle.
 - **Mesure de coût CPU : non concluante** sur cette machine. Secondes CPU pour 20 s de lecture 4K 10-bit en décodage 100 % logiciel : 21,67 / 22,00 avant, 23,16 / 16,66 après — le décodage HEVC logiciel domine et le bruit dépasse le gain. Le gain reste structurel (une passe plein cadre et une allocation de 24 Mo par image en moins) ; il ne concerne que le chemin logiciel, le décodage matériel n'y passait déjà plus.
 
+### Lecture 4K HDR continue de 5 minutes (2026-09-23, itération 7 de la boucle)
+
+- [TESTED-OK] Fichier de 330 s en 4K HDR10 PQ 10-bit avec piste audio (`long_hdr_4k.mp4`, 1,6 Go), décodage matériel D3D11VA, lecture d'une traite.
+- **Aucune frame perdue** : 7 911 paquets vidéo transmis, 7 911 décodés, **0 droppée** côté worker et 0 côté démultiplexeur. 15 462 frames audio.
+- **Aucune coupure audio** : tampon audio jamais sous **2,32 s** (moyenne 3,44 s, maximum 3,65 s) sur 102 relevés ; `audio_master=true` sur la totalité du test, aucun relevé sous 0,5 s.
+- **Dérive audio/vidéo** : `pos - wall` passe de −0,010 s à +0,130 s en 317 s, soit **+0,041 %** — c'est l'écart de cadence entre l'horloge du périphérique audio (qui fait référence) et l'horloge système, pas une dérive de synchronisation : la vidéo suit l'horloge audio, donc l'image reste calée sur le son. Inaudible et invisible.
+- Aucun avertissement ni erreur dans le journal hormis l'absence des services Go optionnels (ports 18080/18081).
+
 ### Reste à faire
 
 - [ ] Utiliser les métadonnées de mastering réelles (MaxCLL / master-display) comme pic de tone mapping, au lieu de la valeur figée `max_luminance` de la config.
