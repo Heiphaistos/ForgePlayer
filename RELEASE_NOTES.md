@@ -2,6 +2,14 @@
 
 ---
 
+## v1.10.0 (2026-09-28) — Robustesse du démuxeur
+
+- Le thread du démuxeur s'arrête dès que le pipeline est lâché, même si la commande `Stop` a été perdue (file de commandes pleine pendant un seek ou une lecture réseau lente). Avant, il pouvait tourner à vie en gardant le fichier, le socket et les surfaces GPU.
+- Sous-titres bitmap (PGS, VOBSUB, DVB) : le pas de ligne renvoyé par FFmpeg est contrôlé (positif et au moins égal à la largeur) avant la lecture non sûre des pixels.
+- `Cargo.lock` est désormais versionné (builds reproductibles, `cargo audit` fiable) ; rustls 0.23.45 (RUSTSEC-2026-0285 corrigé).
+
+---
+
 ## v1.8.1 (2026-09-23) — Revue de tous les formats : quatre défauts corrigés
 
 Batterie de dix combinaisons codec + conteneur passée fichier par fichier. Quatre défauts en sont sortis, tous corrigés ; **les dix sont maintenant lus à l'heure exacte** (`position == temps réel`, tampon audio ≈ 3 s).
