@@ -183,7 +183,7 @@ pub fn run_demuxer(
 
     'main: loop {
         // Traite toutes les commandes en attente
-        while let Ok(cmd) = cmd_rx.try_recv() {
+        while let Some(cmd) = next_command(&cmd_rx) {
             match cmd {
                 PipelineCommand::Stop   => break 'main,
                 PipelineCommand::Pause  => paused = true,
@@ -543,6 +543,29 @@ fn flush_audio_decoder(
     }
 }
 
+/// Commande suivante. Émetteur disparu (pipeline lâché, `Stop` perdu sur une file
+/// pleine) = `Stop` : sinon le thread tournerait à vie en gardant fichier et surfaces.
+fn next_command(rx: &Receiver<PipelineCommand>) -> Option<PipelineCommand> {
+    match rx.try_recv() {
+        Ok(cmd) => Some(cmd),
+        Err(crossbeam_channel::TryRecvError::Empty) => None,
+        Err(crossbeam_channel::TryRecvError::Disconnected) => Some(PipelineCommand::Stop),
+    }
+}
+
+#[cfg(test)]
+mod command_tests {
+    use super::*;
+
+    #[test]
+    fn dropped_sender_stops_demuxer() {
+        let (tx, rx) = bounded::<PipelineCommand>(1);
+        assert!(next_command(&rx).is_none());
+        drop(tx);
+        assert!(matches!(next_command(&rx), Some(PipelineCommand::Stop)));
+    }
+}
+
 /// Convertit les rectangles bitmap d'un sous-titre (PGS/HDMV, VOBSUB, DVB) en
 /// images RGBA. Le décodeur FFmpeg rend ces formats en PAL8 : `data[0]` contient
 /// un index par pixel et `data[1]` la palette, 256 entrées ARGB rangées en
@@ -560,9 +583,12 @@ fn collect_subtitle_bitmaps(
 
         let (indices, palette, stride) = unsafe {
             let r = &*bmp.as_ptr();
-            (r.data[0], r.data[1], r.linesize[0] as usize)
+            (r.data[0], r.data[1], r.linesize[0])
         };
-        if indices.is_null() || palette.is_null() || stride == 0 { continue; }
+        // `from_raw_parts(.., w)` ci-dessous lit `w` octets par ligne : un pas négatif
+        // ou plus court que la largeur sortirait du tampon de FFmpeg.
+        if indices.is_null() || palette.is_null() || stride <= 0 || (stride as usize) < w { continue; }
+        let stride = stride as usize;
 
         let colors = bmp.colors().min(256);
         let mut lut = [[0u8; 4]; 256];
