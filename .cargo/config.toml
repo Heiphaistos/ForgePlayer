@@ -2,7 +2,7 @@
 # crt-static : lie le runtime C (vcruntime140/msvcp140) en statique → binaire portable
 # sans VC++ Redistributable installé (indispensable pour la release ZIP).
 [target.x86_64-pc-windows-msvc]
-rustflags = ["-C", "target-feature=+avx2,+fma,+crt-static"]
+rustflags = ["-C", "target-feature=+avx2,+fma,+crt-static", "-C", "control-flow-guard"]
 
 [env]
 FFMPEG_DIR      = "C:/ffmpeg"
