@@ -2,6 +2,12 @@
 
 ---
 
+## v1.10.1 (2026-10-01) — Durcissement Windows
+
+- Control Flow Guard activé sur l'exécutable Windows.
+
+---
+
 ## v1.10.0 (2026-09-28) — Robustesse du démuxeur
 
 - Le thread du démuxeur s'arrête dès que le pipeline est lâché, même si la commande `Stop` a été perdue (file de commandes pleine pendant un seek ou une lecture réseau lente). Avant, il pouvait tourner à vie en gardant le fichier, le socket et les surfaces GPU.
