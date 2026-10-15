@@ -2,7 +2,7 @@
   <h1>ForgePlayer</h1>
   <p><strong>Lecteur multimédia haute performance sous Windows — pipeline Rust/wgpu + services Go.</strong></p>
 
-  ![Version](https://img.shields.io/badge/version-1.4.5-blue)
+  ![Version](https://img.shields.io/badge/version-1.11.0-blue)
   ![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D4?logo=windows)
   ![Rust](https://img.shields.io/badge/Rust-1.75%2B-orange?logo=rust)
   ![Go](https://img.shields.io/badge/Go-1.22-00ADD8?logo=go)
@@ -54,7 +54,7 @@ ForgePlayer est un lecteur multimédia natif Windows construit sur un pipeline R
 
 ### Option recommandée — Portable ZIP
 
-1. Télécharger la dernière archive `ForgePlayer_v1.10.1_Portable.zip` depuis la [page Releases](https://github.com/Heiphaistos/ForgePlayer/releases).
+1. Télécharger la dernière archive `ForgePlayer_v1.11.0_Portable.zip` depuis la [page Releases](https://github.com/Heiphaistos/ForgePlayer/releases).
 2. Extraire dans le dossier de votre choix.
 3. Lancer `launch.bat` (démarre les services Go + le lecteur).
 
@@ -63,6 +63,12 @@ ForgePlayer est un lecteur multimédia natif Windows construit sur un pipeline R
 > set OPENSUBTITLES_API_KEY=votre_cle
 > set TMDB_API_KEY=votre_cle
 > ```
+
+### Mises à jour automatiques
+
+La copie installée avec `ForgePlayer_vX.Y.Z_Setup.exe` se met à jour seule : vérification 30 s après le démarrage puis toutes les 6 h, installation silencieuse après votre accord, relance automatique. Menu **Outils > Rechercher une mise à jour** pour forcer la vérification ; le réglage **Vérifier les mises à jour automatiquement** (Paramètres) permet de la couper. La copie portable est seulement prévenue.
+
+Publication (mainteneur) : `python outils/publier.py` signe `dist/latest.json`, à joindre à la release avec le Setup.
 
 ### Build depuis les sources
 

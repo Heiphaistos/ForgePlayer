@@ -2,6 +2,17 @@
 
 ---
 
+## v1.11.0 (2026-10-15) — Mise à jour automatique
+
+- Recherche automatique de mises à jour 30 s après le démarrage puis toutes les 6 h (réglage « Vérifier les mises à jour automatiquement », actif par défaut).
+- Menu Outils > « Rechercher une mise à jour » : version, notes, progression du téléchargement.
+- Manifeste `latest.json` signé Ed25519, taille et SHA-256 de l'installateur vérifiés (fichier jeté si différent), adresse limitée aux releases officielles.
+- Installation silencieuse puis relance, uniquement pour la copie installée ; la copie portable est seulement prévenue.
+- Une lecture en cours n'est jamais interrompue sans accord (installation à la fermeture possible).
+- `outils/publier.py` : génère et signe le manifeste.
+
+---
+
 ## v1.10.1 (2026-10-01) — Durcissement Windows
 
 - Control Flow Guard activé sur l'exécutable Windows.
