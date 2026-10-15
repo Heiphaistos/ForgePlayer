@@ -66,6 +66,9 @@ pub struct AppConfig {
     pub loop_mode:           LoopMode,
     #[serde(default = "default_speed")]
     pub playback_speed:      f32,
+    /// Recherche les mises à jour au démarrage puis toutes les 6 h.
+    #[serde(default = "default_true")]
+    pub auto_update:         bool,
 }
 
 fn default_speed() -> f32 { 1.0 }
@@ -90,6 +93,7 @@ impl Default for AppConfig {
             aspect_mode:           AspectMode::Fit,
             loop_mode:             LoopMode::Off,
             playback_speed:        1.0,
+            auto_update:           true,
         }
     }
 }

@@ -30,6 +30,9 @@ crossbeam-channel = { workspace = true }
 reqwest       = { workspace = true }
 rfd           = { workspace = true }
 image         = { workspace = true }
+ed25519-dalek = { workspace = true }
+sha2          = { workspace = true }
+base64        = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3", features = ["winuser", "shellapi"] }

@@ -4,6 +4,7 @@ mod player;
 mod playlist_io;
 mod services;
 mod ui;
+mod updater;
 mod video_callback;
 
 use anyhow::Result;

@@ -5,4 +5,5 @@ pub mod info_overlay;
 pub mod player_view;
 pub mod playlist;
 pub mod settings;
+pub mod update_dialog;
 pub mod url_dialog;

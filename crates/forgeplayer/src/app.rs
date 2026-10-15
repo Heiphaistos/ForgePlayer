@@ -6,7 +6,8 @@ use parking_lot::Mutex;
 use crate::config::AppConfig;
 use crate::player::{Player, PlayerState};
 use crate::services::ServicesClient;
-use crate::ui::{controls, file_browser, info_overlay, player_view, playlist, settings, url_dialog};
+use crate::ui::{controls, file_browser, info_overlay, player_view, playlist, settings, update_dialog, url_dialog};
+use crate::updater;
 use crate::ui::image_viewer::ImageViewer;
 use crate::video_callback::SharedFrame;
 use omni_audio::AudioEngine;
@@ -67,6 +68,12 @@ pub struct ForgeApp {
     last_audio_pos:     f64,
     audio_stall_since:  Option<std::time::Instant>,
     audio_stall_warned: bool,
+    upd:                updater::Shared,
+    upd_open:           bool,
+    /// L'état « disponible » courant a déjà ouvert la fenêtre.
+    upd_announced:      bool,
+    upd_next_check:     f64,
+    install_on_exit:    Option<std::path::PathBuf>,
 }
 
 /// Caractères interdits dans un nom de fichier Windows.
@@ -178,7 +185,13 @@ impl ForgeApp {
             last_audio_pos: -1.0,
             audio_stall_since: None,
             audio_stall_warned: false,
+            upd: Default::default(),
+            upd_open: false,
+            upd_announced: false,
+            upd_next_check: updater::FIRST_CHECK_SECS,
+            install_on_exit: None,
         };
+        updater::cleanup_old();
 
         // Restaure volume et vitesse de la session précédente
         app.player.zero_copy = app_zero_copy;
@@ -1090,6 +1103,8 @@ impl eframe::App for ForgeApp {
             settings::show(ctx, &mut self.show_settings, &mut self.config);
         }
 
+        self.tick_update(ctx, now);
+
         // Cadence de redessin : celle du FILM, pas celle de l'écran. Redessiner
         // 70 fois par seconde un film à 24 images par seconde fait trois fois le
         // travail d'interface pour un résultat identique — c'est ce qui
@@ -1113,6 +1128,9 @@ impl eframe::App for ForgeApp {
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.remember_position();
         self.player.stop();
+        if let Some(setup) = self.install_on_exit.take() {
+            updater::launch_installer(&setup);
+        }
         // Persiste volume et vitesse de lecture pour la prochaine session
         self.config.volume = self.player.volume;
         self.config.playback_speed = self.player.speed();
@@ -1121,6 +1139,47 @@ impl eframe::App for ForgeApp {
 }
 
 impl ForgeApp {
+    /// Vérification automatique (30 s après le démarrage puis toutes les 6 h) et fenêtre de mise à jour.
+    fn tick_update(&mut self, ctx: &Context, now: f64) {
+        if self.config.auto_update && now >= self.upd_next_check {
+            self.upd_next_check = now + updater::CHECK_EVERY_SECS;
+            self.upd_announced = false;
+            updater::spawn_check(&self.upd);
+        }
+        let status = self.upd.lock().unwrap().clone();
+        match &status {
+            updater::Status::Available(_) if !self.upd_announced => {
+                self.upd_announced = true;
+                self.upd_open = true;
+            }
+            _ => {}
+        }
+        if matches!(status, updater::Status::Checking | updater::Status::Downloading { .. }) {
+            ctx.request_repaint_after(std::time::Duration::from_millis(200));
+        }
+        if !self.upd_open {
+            return;
+        }
+        let playing = matches!(
+            self.player.state,
+            PlayerState::Playing | PlayerState::Buffering(_) | PlayerState::Loading
+        );
+        match update_dialog::show(ctx, &mut self.upd_open, &status, playing, updater::is_installed_copy()) {
+            update_dialog::Action::None => {}
+            update_dialog::Action::Check => updater::spawn_check(&self.upd),
+            update_dialog::Action::Download(m) => updater::spawn_download(&self.upd, m),
+            update_dialog::Action::InstallOnExit(p) => {
+                self.install_on_exit = Some(p);
+                self.upd_open = false;
+                self.set_osd("Mise à jour installée à la fermeture");
+            }
+            update_dialog::Action::InstallNow(p) => {
+                self.install_on_exit = Some(p);
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        }
+    }
+
     fn draw_menu_bar(&mut self, ui: &mut egui::Ui, _now: f64) {
         egui::menu::bar(ui, |ui| {
             ui.menu_button("Fichier", |ui| {
@@ -1220,6 +1279,12 @@ impl ForgeApp {
             ui.menu_button("Outils", |ui| {
                 if ui.button("⚙ Paramètres").clicked() {
                     self.show_settings = true; ui.close_menu();
+                }
+                if ui.button("🔄 Rechercher une mise à jour").clicked() {
+                    self.upd_open = true;
+                    self.upd_announced = true;
+                    updater::spawn_check(&self.upd);
+                    ui.close_menu();
                 }
             });
 

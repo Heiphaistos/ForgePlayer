@@ -47,6 +47,12 @@ pub fn show(ctx: &Context, open: &mut bool, cfg: &mut AppConfig) {
                 });
 
                 ui.horizontal(|ui| {
+                    if ui.checkbox(&mut cfg.auto_update, "Vérifier les mises à jour automatiquement").changed() {
+                        changed = true;
+                    }
+                });
+
+                ui.horizontal(|ui| {
                     if ui.checkbox(&mut cfg.resume_playback, "Reprendre là où je me suis arrêté").changed() {
                         changed = true;
                     }

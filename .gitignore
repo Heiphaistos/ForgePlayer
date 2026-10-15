@@ -32,3 +32,6 @@ desktop.ini
 tmp/
 temp/
 .testmedia/
+
+# Cles de signature des mises a jour
+*.key
