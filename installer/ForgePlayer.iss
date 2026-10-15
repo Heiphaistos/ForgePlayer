@@ -2,7 +2,7 @@
 ; Build: ISCC.exe installer\ForgePlayer.iss (run from repo root, expects dist\ populated by build.bat release x64)
 
 #define MyAppName "ForgePlayer"
-#define MyAppVersion "1.10.1"
+#define MyAppVersion "1.11.0"
 #define MyAppPublisher "ForgePlayer"
 #define MyAppExeName "launch.bat"
 #define MyDistDir "..\dist"
@@ -48,3 +48,11 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDi
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent runasoriginaluser
+; Relance apres une mise a jour automatique (l'appli passe /RELANCER=1 : voir updater.rs).
+Filename: "{app}\{#MyAppExeName}"; Flags: nowait runasoriginaluser; Check: Relancer
+
+[Code]
+function Relancer: Boolean;
+begin
+  Result := ExpandConstant('{param:RELANCER|0}') = '1';
+end;
