@@ -35,3 +35,6 @@ temp/
 
 # Cles de signature des mises a jour
 *.key
+
+# Surcharge cargo locale (chemins de la machine)
+.cargo/config.local.toml

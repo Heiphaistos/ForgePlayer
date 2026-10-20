@@ -5,7 +5,7 @@
     python outils/publier.py [--notes "Phrase."]      calcule taille + SHA-256 de
         dist/ForgePlayer_v<version>_Setup.exe et écrit dist/latest.json + latest.json.sig
 
-La clé privée vit dans D:/MDP/forgeplayer-updater.key (jamais dans le dépôt). La clé
+La clé privée (jamais dans le dépôt) : $FORGEPLAYER_UPDATER_KEY, sinon $MDP_DIR/forgeplayer-updater.key. La clé
 publique correspondante est embarquée dans crates/forgeplayer/src/updater.rs (PUBLIC_KEY).
 Ensuite, à la main : attacher Setup + latest.json + latest.json.sig à la release vX.Y.Z.
 """
@@ -14,6 +14,7 @@ import argparse
 import base64
 import hashlib
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -22,8 +23,18 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 RACINE = Path(__file__).resolve().parents[1]
-CLE = Path("D:/MDP/forgeplayer-updater.key")
+CLE = None  # fixé par main() via chemin_cle()
 DEPOT = "Heiphaistos/ForgePlayer"
+
+
+def chemin_cle():
+    e = os.environ.get("FORGEPLAYER_UPDATER_KEY")
+    if e:
+        return Path(e)
+    d = os.environ.get("MDP_DIR")
+    if d:
+        return Path(d) / "forgeplayer-updater.key"
+    sys.exit("FORGEPLAYER_UPDATER_KEY (ou MDP_DIR) non défini : chemin de la clé de signature")
 
 
 def b64(raw):
@@ -47,6 +58,8 @@ def main():
     p.add_argument("action", nargs="?", default="manifeste", choices=["manifeste", "cle"])
     p.add_argument("--notes", default="")
     a = p.parse_args()
+    global CLE
+    CLE = chemin_cle()
     if a.action == "cle":
         if CLE.exists():
             sys.exit("clé déjà présente : %s (ne pas écraser)" % CLE)

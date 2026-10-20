@@ -1,3 +1,5 @@
+include = [{ path = "config.local.toml", optional = true }]
+
 # Windows x64 MSVC target
 # crt-static : lie le runtime C (vcruntime140/msvcp140) en statique → binaire portable
 # sans VC++ Redistributable installé (indispensable pour la release ZIP).
@@ -11,8 +13,8 @@ RUST_LOG        = "info"
 # Use clang-cl so cc crate can compile FFmpeg's check.c (needs __attribute__ support)
 CC              = "C:/Program Files/LLVM/bin/clang-cl.exe"
 CXX             = "C:/Program Files/LLVM/bin/clang-cl.exe"
-# MinGW target + headers for bindgen so struct sizes match BtbN FFmpeg (MinGW-compiled) DLLs
-BINDGEN_EXTRA_CLANG_ARGS = "--target=x86_64-w64-mingw32 -D_UCRT -IC:/PROGRA~1/LLVM/lib/clang/22/include -IC:/Users/Momo/scoop/apps/mingw/current/x86_64-w64-mingw32/include -IC:/Users/Momo/scoop/apps/mingw/current/include"
+# Surcharges de poste (chemins MinGW/clang propres a la machine, BINDGEN_EXTRA_CLANG_ARGS) :
+# .cargo/config.local.toml, non versionne.
 
 [build]
 # jobs = 0   # désactivé — utilise la valeur par défaut (nombre de cores)
