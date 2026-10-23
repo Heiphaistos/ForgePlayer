@@ -28,7 +28,7 @@ serde_json         = "1"
 # Concurrency & channels
 crossbeam-channel  = "0.5"
 parking_lot        = "0.12"
-ringbuf            = "0.3"
+ringbuf            = "0.5"
 # FFmpeg bindings (requires FFMPEG_DIR env var or vcpkg)
 ffmpeg-next        = "8"
 # GUI (egui + wgpu backend)

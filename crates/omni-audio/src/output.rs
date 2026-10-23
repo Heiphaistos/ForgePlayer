@@ -2,7 +2,8 @@ use anyhow::{Context as _, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use omni_core::decoder::DecodedAudioFrame;
-use ringbuf::{HeapConsumer, HeapProducer, HeapRb};
+use ringbuf::traits::{Consumer, Observer, Producer, Split};
+use ringbuf::{HeapCons as HeapConsumer, HeapProd as HeapProducer, HeapRb};
 use std::sync::{
     atomic::{AtomicU32, AtomicU64, AtomicBool, Ordering},
     Arc,
@@ -123,7 +124,7 @@ impl AudioEngine {
         self.generation.fetch_add(1, Ordering::Relaxed);
         self.last_pts.store(PTS_NONE, Ordering::Relaxed);
         let mut c = self.consumer.lock();
-        let n = c.len();
+        let n = c.occupied_len();
         c.skip(n);
         drop(c);
         self.ring_level.store(0, Ordering::Release);
@@ -171,7 +172,7 @@ fn build_stream(
                 if pau_w.load(Ordering::Relaxed) { data.fill(0.0); return; }
                 let mut c = cons_w.lock();
                 let n = c.pop_slice(data);
-                let remaining = c.len();
+                let remaining = c.occupied_len();
                 drop(c);
                 rl_w.store(remaining as u64, Ordering::Release);
                 if n < data.len() { data[n..].fill(0.0); }
@@ -193,7 +194,7 @@ fn build_stream(
                 scratch.resize(data.len(), 0.0);
                 let mut c = cons_w.lock();
                 let n = c.pop_slice(&mut scratch);
-                let remaining = c.len();
+                let remaining = c.occupied_len();
                 drop(c);
                 rl_w.store(remaining as u64, Ordering::Release);
                 if n < scratch.len() { scratch[n..].fill(0.0); }
@@ -215,7 +216,7 @@ fn build_stream(
                 scratch.resize(data.len(), 0.0);
                 let mut c = cons_w.lock();
                 let n = c.pop_slice(&mut scratch);
-                let remaining = c.len();
+                let remaining = c.occupied_len();
                 drop(c);
                 rl_w.store(remaining as u64, Ordering::Release);
                 if n < scratch.len() { scratch[n..].fill(0.0); }
@@ -236,7 +237,7 @@ fn build_stream(
                 scratch.resize(data.len(), 0.0);
                 let mut c = cons_w.lock();
                 let n = c.pop_slice(&mut scratch);
-                let remaining = c.len();
+                let remaining = c.occupied_len();
                 drop(c);
                 rl_w.store(remaining as u64, Ordering::Release);
                 if n < scratch.len() { scratch[n..].fill(0.0); }
@@ -257,7 +258,7 @@ fn build_stream(
                 scratch.resize(data.len(), 0.0);
                 let mut c = cons_w.lock();
                 let n = c.pop_slice(&mut scratch);
-                let remaining = c.len();
+                let remaining = c.occupied_len();
                 drop(c);
                 rl_w.store(remaining as u64, Ordering::Release);
                 if n < scratch.len() { scratch[n..].fill(0.0); }
@@ -278,7 +279,7 @@ fn build_stream(
                 scratch.resize(data.len(), 0.0);
                 let mut c = cons_w.lock();
                 let n = c.pop_slice(&mut scratch);
-                let remaining = c.len();
+                let remaining = c.occupied_len();
                 drop(c);
                 rl_w.store(remaining as u64, Ordering::Release);
                 if n < scratch.len() { scratch[n..].fill(0.0); }
@@ -299,7 +300,7 @@ fn build_stream(
                 scratch.resize(data.len(), 0.0);
                 let mut c = cons_w.lock();
                 let n = c.pop_slice(&mut scratch);
-                let remaining = c.len();
+                let remaining = c.occupied_len();
                 drop(c);
                 rl_w.store(remaining as u64, Ordering::Release);
                 if n < scratch.len() { scratch[n..].fill(0.0); }
@@ -320,7 +321,7 @@ fn build_stream(
                 scratch.resize(data.len(), 0.0);
                 let mut c = cons_w.lock();
                 let n = c.pop_slice(&mut scratch);
-                let remaining = c.len();
+                let remaining = c.occupied_len();
                 drop(c);
                 rl_w.store(remaining as u64, Ordering::Release);
                 if n < scratch.len() { scratch[n..].fill(0.0); }
@@ -406,7 +407,7 @@ fn fill_ring(
 
         let pushed = producer.push_slice(&final_samples);
         // ring_level mis à jour ici aussi pour le fill ; CPAL met à jour côté consommation
-        ring_level.store(producer.len() as u64, Ordering::Release);
+        ring_level.store(producer.occupied_len() as u64, Ordering::Release);
 
         if pushed < final_samples.len() {
             log::warn!("audio ring overflow: dropped {} samples", final_samples.len() - pushed);
